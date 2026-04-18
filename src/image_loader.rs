@@ -15,13 +15,8 @@ use base64::Engine;
 
 /// Messages sent from loader threads
 enum ImageMsg {
-    Ready {
-        key: String,
-        texture: TextureHandle,
-    },
-    Failed {
-        key: String,
-    },
+    Ready { key: String, texture: TextureHandle },
+    Failed { key: String },
 }
 
 /// State of an image in the cache
@@ -175,19 +170,17 @@ impl ImageLoader {
             None => return, // No context yet, can't load
         };
 
-        std::thread::spawn(move || {
-            match load_image_data(&resolved) {
-                Ok(image_data) => {
-                    let color_image = egui::ColorImage::from_rgba_unmultiplied(
-                        [image_data.width as usize, image_data.height as usize],
-                        &image_data.rgba,
-                    );
-                    let texture = ctx.load_texture(&key, color_image, TextureOptions::LINEAR);
-                    let _ = tx.send(ImageMsg::Ready { key, texture });
-                }
-                Err(_) => {
-                    let _ = tx.send(ImageMsg::Failed { key });
-                }
+        std::thread::spawn(move || match load_image_data(&resolved) {
+            Ok(image_data) => {
+                let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                    [image_data.width as usize, image_data.height as usize],
+                    &image_data.rgba,
+                );
+                let texture = ctx.load_texture(&key, color_image, TextureOptions::LINEAR);
+                let _ = tx.send(ImageMsg::Ready { key, texture });
+            }
+            Err(_) => {
+                let _ = tx.send(ImageMsg::Failed { key });
             }
         });
     }
@@ -230,7 +223,9 @@ fn load_http_image(url: &str) -> Result<ImageData, String> {
         .send()
         .map_err(|e| format!("HTTP request failed: {}", e))?;
 
-    let data = response.bytes().map_err(|e| format!("Failed to read response: {}", e))?;
+    let data = response
+        .bytes()
+        .map_err(|e| format!("Failed to read response: {}", e))?;
     decode_image(&data)
 }
 

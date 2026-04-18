@@ -11,63 +11,33 @@ use crate::theme::Theme;
 use crate::viewport::ViewportState;
 
 /// Render a complete markdown document with viewport culling
-pub fn render_doc(ui: &mut Ui, doc: &MarkdownDoc, theme: &Theme, font_size: f32, image_loader: &mut ImageLoader, selector: &mut TextSelector, viewport: &mut ViewportState) {
-    // Reset viewport state if document changed
-    let content_hash = {
-        use std::hash::Hasher;
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        std::hash::Hash::hash(&doc.nodes.len(), &mut h);
-        for node in &doc.nodes {
-            std::hash::Hash::hash(&std::mem::discriminant(node), &mut h);
-            // Also hash some content to distinguish same-structure different-content docs
-            match node {
-                DocNode::Heading { level, .. } => { std::hash::Hash::hash(level, &mut h); }
-                DocNode::CodeBlock { code, .. } => { std::hash::Hash::hash(&code.len(), &mut h); }
-                DocNode::Paragraph(inlines) => { std::hash::Hash::hash(&inlines.len(), &mut h); }
-                DocNode::OrderedList { start, items } => { std::hash::Hash::hash(start, &mut h); std::hash::Hash::hash(&items.len(), &mut h); }
-                DocNode::UnorderedList(items) => { std::hash::Hash::hash(&items.len(), &mut h); }
-                DocNode::TaskList { items } => { std::hash::Hash::hash(&items.len(), &mut h); }
-                DocNode::Table { rows, .. } => { std::hash::Hash::hash(&rows.len(), &mut h); }
-                DocNode::BlockQuote(children) => { std::hash::Hash::hash(&children.len(), &mut h); }
-                DocNode::Image { url, .. } => { std::hash::Hash::hash(url, &mut h); }
-                DocNode::HtmlBlock(html) => { std::hash::Hash::hash(&html.len(), &mut h); }
-                DocNode::FootnoteDef { label, .. } => { std::hash::Hash::hash(label, &mut h); }
-                _ => {}
-            }
-        }
-        h.finish()
-    };
-    viewport.reset(doc.nodes.len(), content_hash);
-
-    // Get visible range using document coordinates
-    let visible_range = viewport.visible_range();
-
+pub fn render_doc(
+    ui: &mut Ui,
+    doc: &MarkdownDoc,
+    theme: &Theme,
+    font_size: f32,
+    image_loader: &mut ImageLoader,
+    selector: &mut TextSelector,
+    viewport: &mut ViewportState,
+) {
+    // Bypass viewport culling for now - render all blocks
     for (i, node) in doc.nodes.iter().enumerate() {
-        if !visible_range.contains(&i) {
-            // Allocate space for culled blocks to maintain scroll height
-            let block = &viewport.blocks[i];
-            ui.add_space(block.height + 4.0);
-            continue;
-        }
-
-        let top_before = ui.min_rect().top();
         render_block(ui, node, theme, font_size, i, image_loader, selector);
-        let top_after = ui.min_rect().top();
-
-        // Update block height from actual rendering
-        let rendered_height = top_after - top_before;
-        let block = &viewport.blocks[i];
-        if rendered_height > 0.0 && (!block.measured || (block.height - rendered_height).abs() > 1.0) {
-            viewport.update_block_height(i, rendered_height);
-        }
-
         ui.add_space(4.0);
     }
     ui.add_space(32.0);
 }
 
 /// Render a block-level node
-fn render_block(ui: &mut Ui, node: &DocNode, theme: &Theme, font_size: f32, index: usize, image_loader: &mut ImageLoader, selector: &mut TextSelector) {
+fn render_block(
+    ui: &mut Ui,
+    node: &DocNode,
+    theme: &Theme,
+    font_size: f32,
+    index: usize,
+    image_loader: &mut ImageLoader,
+    selector: &mut TextSelector,
+) {
     match node {
         DocNode::Heading { level, children } => {
             render_heading(ui, *level, children, theme, font_size, selector);
@@ -136,7 +106,13 @@ fn render_heading(
 
 // ─── Paragraph ──────────────────────────────────────────────────────────────
 
-fn render_paragraph(ui: &mut Ui, inlines: &[InlineNode], theme: &Theme, font_size: f32, selector: &mut TextSelector) {
+fn render_paragraph(
+    ui: &mut Ui,
+    inlines: &[InlineNode],
+    theme: &Theme,
+    font_size: f32,
+    selector: &mut TextSelector,
+) {
     let before = ui.cursor().min;
     render_inlines(ui, inlines, theme, font_size, theme.foreground, selector);
     let after = ui.cursor().min;
@@ -148,7 +124,14 @@ fn render_paragraph(ui: &mut Ui, inlines: &[InlineNode], theme: &Theme, font_siz
 
 // ─── Code Block ─────────────────────────────────────────────────────────────
 
-fn render_code_block(ui: &mut Ui, lang: &str, code: &str, theme: &Theme, font_size: f32, block_index: usize) {
+fn render_code_block(
+    ui: &mut Ui,
+    lang: &str,
+    code: &str,
+    theme: &Theme,
+    font_size: f32,
+    block_index: usize,
+) {
     let code_size = font_size * 0.85;
 
     // Background frame
@@ -177,7 +160,12 @@ fn render_code_block(ui: &mut Ui, lang: &str, code: &str, theme: &Theme, font_si
             .id_salt(format!("code_scroll_{}", block_index))
             .show(ui, |ui| {
                 // Try syntax highlighting → LayoutJob
-                if let Some(job) = crate::markdown::highlight::highlight_code(code, lang, theme.syntax_theme, code_size) {
+                if let Some(job) = crate::markdown::highlight::highlight_code(
+                    code,
+                    lang,
+                    theme.syntax_theme,
+                    code_size,
+                ) {
                     ui.label(job);
                 } else {
                     ui.label(
@@ -210,7 +198,7 @@ fn render_table(
 
     frame.show(ui, |ui| {
         ScrollArea::horizontal()
-            .id_salt("table_scroll")
+            .id_salt(format!("table_scroll_{}", block_index))
             .show(ui, |ui| {
                 let _num_cols = aligns.len().max(headers.len());
 
@@ -256,16 +244,34 @@ fn render_table_cell(
     ui.with_layout(layout, |ui| {
         Frame::NONE
             .inner_margin(Margin::same(8))
-            .fill(if is_header { theme.table_header_bg } else { Color32::TRANSPARENT })
+            .fill(if is_header {
+                theme.table_header_bg
+            } else {
+                Color32::TRANSPARENT
+            })
             .show(ui, |ui| {
-                render_inlines(ui, &cell.content, theme, font_size, theme.foreground, &mut TextSelector::new());
+                render_inlines(
+                    ui,
+                    &cell.content,
+                    theme,
+                    font_size,
+                    theme.foreground,
+                    &mut TextSelector::new(),
+                );
             });
     });
 }
 
 // ─── Block Quote ────────────────────────────────────────────────────────────
 
-fn render_block_quote(ui: &mut Ui, children: &[DocNode], theme: &Theme, font_size: f32, image_loader: &mut ImageLoader, selector: &mut TextSelector) {
+fn render_block_quote(
+    ui: &mut Ui,
+    children: &[DocNode],
+    theme: &Theme,
+    font_size: f32,
+    image_loader: &mut ImageLoader,
+    selector: &mut TextSelector,
+) {
     Frame::NONE
         .fill(Color32::TRANSPARENT)
         .inner_margin(0)
@@ -277,7 +283,15 @@ fn render_block_quote(ui: &mut Ui, children: &[DocNode], theme: &Theme, font_siz
                     ui.add_space(16.0); // Space for left border + padding
                     ui.vertical(|ui| {
                         for child in children {
-                            render_block(ui, child, theme, font_size * 0.95, 0, image_loader, selector);
+                            render_block(
+                                ui,
+                                child,
+                                theme,
+                                font_size * 0.95,
+                                0,
+                                image_loader,
+                                selector,
+                            );
                         }
                     });
                 });
@@ -285,10 +299,17 @@ fn render_block_quote(ui: &mut Ui, children: &[DocNode], theme: &Theme, font_siz
 
             // Draw left border over the content area
             let border_rect = Rect::from_min_max(
-                Pos2::new(content_response.response.rect.left() + 6.0, content_response.response.rect.top()),
-                Pos2::new(content_response.response.rect.left() + 9.0, content_response.response.rect.bottom()),
+                Pos2::new(
+                    content_response.response.rect.left() + 6.0,
+                    content_response.response.rect.top(),
+                ),
+                Pos2::new(
+                    content_response.response.rect.left() + 9.0,
+                    content_response.response.rect.bottom(),
+                ),
             );
-            ui.painter().rect_filled(border_rect, 2.0, theme.quote_border);
+            ui.painter()
+                .rect_filled(border_rect, 2.0, theme.quote_border);
         });
 }
 
@@ -322,16 +343,19 @@ fn render_ordered_list(
     }
 }
 
-fn render_unordered_list_ui(ui: &mut Ui, items: &[ListItem], theme: &Theme, font_size: f32, image_loader: &mut ImageLoader, selector: &mut TextSelector) {
+fn render_unordered_list_ui(
+    ui: &mut Ui,
+    items: &[ListItem],
+    theme: &Theme,
+    font_size: f32,
+    image_loader: &mut ImageLoader,
+    selector: &mut TextSelector,
+) {
     for item in items {
         ui.horizontal(|ui| {
             ui.add_space(16.0);
             // Bullet character
-            ui.label(
-                RichText::new("•")
-                    .size(font_size)
-                    .color(theme.list_marker),
-            );
+            ui.label(RichText::new("•").size(font_size).color(theme.list_marker));
             ui.add_space(4.0);
             ui.vertical(|ui| {
                 for child in &item.children {
@@ -342,21 +366,36 @@ fn render_unordered_list_ui(ui: &mut Ui, items: &[ListItem], theme: &Theme, font
     }
 }
 
-fn render_task_list(ui: &mut Ui, items: &[TaskItem], theme: &Theme, font_size: f32, image_loader: &mut ImageLoader, selector: &mut TextSelector) {
+fn render_task_list(
+    ui: &mut Ui,
+    items: &[TaskItem],
+    theme: &Theme,
+    font_size: f32,
+    image_loader: &mut ImageLoader,
+    selector: &mut TextSelector,
+) {
     for item in items {
         ui.horizontal(|ui| {
             ui.add_space(16.0);
             // Checkbox
-            let (rect, _) = ui.allocate_exact_size(
-                Vec2::new(font_size, font_size),
-                Sense::hover(),
-            );
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(font_size, font_size), Sense::hover());
             let check_rect = rect.shrink(2.0);
             ui.painter().rect(
                 check_rect,
                 2.0,
-                if item.checked { theme.task_checked } else { Color32::TRANSPARENT },
-                Stroke::new(1.5, if item.checked { theme.task_checked } else { theme.task_unchecked }),
+                if item.checked {
+                    theme.task_checked
+                } else {
+                    Color32::TRANSPARENT
+                },
+                Stroke::new(
+                    1.5,
+                    if item.checked {
+                        theme.task_checked
+                    } else {
+                        theme.task_unchecked
+                    },
+                ),
                 StrokeKind::Outside,
             );
             if item.checked {
@@ -402,13 +441,24 @@ fn render_thematic_break(ui: &mut Ui, theme: &Theme) {
 
 // ─── Image ──────────────────────────────────────────────────────────────────
 
-fn render_image(ui: &mut Ui, url: &str, alt: &str, _title: &str, theme: &Theme, image_loader: &mut ImageLoader) {
+fn render_image(
+    ui: &mut Ui,
+    url: &str,
+    alt: &str,
+    _title: &str,
+    theme: &Theme,
+    image_loader: &mut ImageLoader,
+) {
     let max_width = ui.available_width().min(800.0);
 
     match image_loader.get(url) {
         ImageState::Ready(texture) => {
             let size = texture.size_vec2();
-            let scale = if size.x > max_width { max_width / size.x } else { 1.0 };
+            let scale = if size.x > max_width {
+                max_width / size.x
+            } else {
+                1.0
+            };
             let display_size = size * scale;
             ui.add(
                 egui::Image::from_texture(&*texture)
@@ -563,7 +613,16 @@ fn inlines_to_rich_text(
     job.wrap = egui::text::TextWrapping::no_max_width();
 
     let mut links = Vec::new();
-    append_inlines_to_job(inlines, theme, font_size, default_color, &mut job, FontStyle::NORMAL, &mut links, false);
+    append_inlines_to_job(
+        inlines,
+        theme,
+        font_size,
+        default_color,
+        &mut job,
+        FontStyle::NORMAL,
+        &mut links,
+        false,
+    );
 
     (job, links)
 }
@@ -584,7 +643,12 @@ impl Default for FontStyle {
 }
 
 impl FontStyle {
-    const NORMAL: Self = Self { bold: false, italic: false, strikethrough: false, monospace: false };
+    const NORMAL: Self = Self {
+        bold: false,
+        italic: false,
+        strikethrough: false,
+        monospace: false,
+    };
 }
 
 /// Append inline nodes to a LayoutJob with formatting state
@@ -621,25 +685,49 @@ fn append_inlines_to_job(
             InlineNode::Code(s) => {
                 let mut code_style = style;
                 code_style.monospace = true;
-                push_section_with_bg(job, s, font_size * 0.9, theme.code_fg, code_style, false, theme.code_bg);
+                push_section_with_bg(
+                    job,
+                    s,
+                    font_size * 0.9,
+                    theme.code_fg,
+                    code_style,
+                    false,
+                    theme.code_bg,
+                );
             }
             InlineNode::Link { url, children, .. } => {
                 // Record the char range for this link's text (character index, not byte)
                 let link_start = job.text.chars().count();
                 let link_style = style;
                 // Render children with link color
-                append_inlines_to_job(children, theme, font_size, theme.link, job, link_style, links, true);
+                append_inlines_to_job(
+                    children, theme, font_size, theme.link, job, link_style, links, true,
+                );
                 let link_end = job.text.chars().count();
                 // Record this link (url, char_range)
                 links.push((url.clone(), link_start..link_end));
                 // Optionally show URL if different from link text
                 let link_text: String = children.iter().map(|n| n.plain_text()).collect();
                 if link_text != *url && !url.is_empty() {
-                    push_section(job, &format!(" ({})", url), font_size * 0.8, theme.muted_text(), FontStyle::NORMAL, false);
+                    push_section(
+                        job,
+                        &format!(" ({})", url),
+                        font_size * 0.8,
+                        theme.muted_text(),
+                        FontStyle::NORMAL,
+                        false,
+                    );
                 }
             }
             InlineNode::Image { alt, .. } => {
-                push_section(job, &format!("🖼 {}", alt), font_size * 0.9, theme.muted_text(), FontStyle::NORMAL, false);
+                push_section(
+                    job,
+                    &format!("🖼 {}", alt),
+                    font_size * 0.9,
+                    theme.muted_text(),
+                    FontStyle::NORMAL,
+                    false,
+                );
             }
             InlineNode::SoftBreak => {
                 push_section(job, " ", font_size, color, style, is_in_link);
@@ -648,13 +736,27 @@ fn append_inlines_to_job(
                 push_section(job, "\n", font_size, color, style, is_in_link);
             }
             InlineNode::FootnoteRef(label) => {
-                push_section(job, &format!("[^{}]", label), font_size * 0.85, theme.link, FontStyle::NORMAL, false);
+                push_section(
+                    job,
+                    &format!("[^{}]", label),
+                    font_size * 0.85,
+                    theme.link,
+                    FontStyle::NORMAL,
+                    false,
+                );
             }
             InlineNode::Superscript(s) => {
                 push_section(job, s, font_size * 0.7, color, FontStyle::NORMAL, false);
             }
             InlineNode::HtmlInline(s) => {
-                push_section(job, s, font_size, theme.muted_text(), FontStyle::NORMAL, false);
+                push_section(
+                    job,
+                    s,
+                    font_size,
+                    theme.muted_text(),
+                    FontStyle::NORMAL,
+                    false,
+                );
             }
         }
     }
@@ -669,7 +771,15 @@ fn push_section(
     style: FontStyle,
     is_link: bool,
 ) {
-    push_section_with_bg(job, text, font_size, color, style, is_link, Color32::TRANSPARENT);
+    push_section_with_bg(
+        job,
+        text,
+        font_size,
+        color,
+        style,
+        is_link,
+        Color32::TRANSPARENT,
+    );
 }
 
 /// Push a text section into the LayoutJob with optional background color
@@ -691,7 +801,11 @@ fn push_section_with_bg(
     let end = job.text.len();
 
     // For bold, use a larger font size as egui doesn't have a bold flag
-    let effective_size = if style.bold { font_size * 1.05 } else { font_size };
+    let effective_size = if style.bold {
+        font_size * 1.05
+    } else {
+        font_size
+    };
 
     let font_family = if style.monospace {
         egui::FontFamily::Monospace
@@ -721,4 +835,3 @@ fn push_section_with_bg(
         },
     });
 }
-

@@ -73,7 +73,8 @@ impl ViewportState {
         for (i, block) in self.blocks.iter_mut().enumerate() {
             if !block.measured {
                 if let Some(&lines) = line_counts.get(i) {
-                    block.height = (lines as f32 * ESTIMATED_LINE_HEIGHT).max(ESTIMATED_LINE_HEIGHT);
+                    block.height =
+                        (lines as f32 * ESTIMATED_LINE_HEIGHT).max(ESTIMATED_LINE_HEIGHT);
                 }
             }
         }
@@ -102,6 +103,13 @@ impl ViewportState {
     /// Get the range of block indices that are visible in the current viewport.
     /// Uses scroll_offset and viewport_height to determine the visible document range.
     pub fn visible_range(&self) -> std::ops::Range<usize> {
+        // If scroll_offset is 0 and no blocks have been measured yet,
+        // show all blocks (first load case)
+        let all_unmeasured = self.blocks.iter().all(|b| !b.measured);
+        if self.scroll_offset == 0.0 && all_unmeasured {
+            return 0..self.blocks.len();
+        }
+
         // Document Y range visible in the viewport
         let doc_top = self.scroll_offset - OVERSCAN_PX;
         let doc_bottom = self.scroll_offset + self.viewport_height + OVERSCAN_PX;

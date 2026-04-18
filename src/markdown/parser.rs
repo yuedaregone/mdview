@@ -215,9 +215,7 @@ fn convert_node<'a>(node: &'a AstNode<'a>) -> Option<DocNode> {
             } else {
                 let items: Vec<ListItem> = node
                     .children()
-                    .filter(|child| {
-                        matches!(&child.data.borrow().value, NodeValue::Item(_))
-                    })
+                    .filter(|child| matches!(&child.data.borrow().value, NodeValue::Item(_)))
                     .map(|child| ListItem {
                         children: convert_children(child),
                     })
@@ -249,9 +247,7 @@ fn convert_node<'a>(node: &'a AstNode<'a>) -> Option<DocNode> {
             })
         }
 
-        NodeValue::HtmlBlock(html_node) => {
-            Some(DocNode::HtmlBlock(html_node.literal.clone()))
-        }
+        NodeValue::HtmlBlock(html_node) => Some(DocNode::HtmlBlock(html_node.literal.clone())),
 
         NodeValue::FootnoteDefinition(fn_def) => {
             let label = fn_def.name.clone();
@@ -314,9 +310,7 @@ fn convert_inline<'a>(node: &'a AstNode<'a>) -> Option<InlineNode> {
             })
         }
 
-        NodeValue::FootnoteReference(fn_ref) => {
-            Some(InlineNode::FootnoteRef(fn_ref.name.clone()))
-        }
+        NodeValue::FootnoteReference(fn_ref) => Some(InlineNode::FootnoteRef(fn_ref.name.clone())),
 
         NodeValue::Superscript => {
             let text = collect_text(node);
@@ -362,9 +356,7 @@ impl InlineNode {
                 children.iter().map(|n| n.plain_text()).collect()
             }
             InlineNode::Code(s) => s.clone(),
-            InlineNode::Link { children, .. } => {
-                children.iter().map(|n| n.plain_text()).collect()
-            }
+            InlineNode::Link { children, .. } => children.iter().map(|n| n.plain_text()).collect(),
             InlineNode::Image { alt, .. } => alt.clone(),
             InlineNode::SoftBreak => " ".to_string(),
             InlineNode::HardBreak => "\n".to_string(),
@@ -386,10 +378,7 @@ impl InlineNode {
 /// - NodeValue::Table(aligns) at the root
 /// - NodeValue::TableRow(header) for rows
 /// - NodeValue::TableCell for cells
-pub fn convert_table<'a>(
-    node: &'a AstNode<'a>,
-    table: &NodeTable,
-) -> Option<DocNode> {
+pub fn convert_table<'a>(node: &'a AstNode<'a>, table: &NodeTable) -> Option<DocNode> {
     let mut headers = Vec::new();
     let mut rows = Vec::new();
 
@@ -448,9 +437,7 @@ pub fn convert_table<'a>(
 fn convert_node_with_table<'a>(node: &'a AstNode<'a>) -> Option<DocNode> {
     let data = node.data.borrow();
     match &data.value {
-        NodeValue::Table(table) => {
-            convert_table(node, table)
-        }
+        NodeValue::Table(table) => convert_table(node, table),
         _ => {
             drop(data);
             convert_node(node)

@@ -2,13 +2,13 @@
 
 use std::sync::OnceLock;
 
+use syntect::easy::HighlightLines;
 use syntect::highlighting::{FontStyle as SyntectFontStyle, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
-use syntect::easy::HighlightLines;
 
 use egui::text::{LayoutJob, LayoutSection, TextFormat, TextWrapping};
-use egui::{Color32, FontId, FontFamily};
+use egui::{Color32, FontFamily, FontId};
 
 struct Highlighter {
     syntax_set: SyntaxSet,
@@ -19,11 +19,21 @@ impl Highlighter {
     fn new() -> Self {
         let syntax_set = two_face::syntax::extra_newlines();
         let theme_set = ThemeSet::load_defaults();
-        Self { syntax_set, theme_set }
+        Self {
+            syntax_set,
+            theme_set,
+        }
     }
 
-    fn highlight(&self, code: &str, lang: &str, theme_name: &str, font_size: f32) -> Option<LayoutJob> {
-        let syntax = self.syntax_set
+    fn highlight(
+        &self,
+        code: &str,
+        lang: &str,
+        theme_name: &str,
+        font_size: f32,
+    ) -> Option<LayoutJob> {
+        let syntax = self
+            .syntax_set
             .find_syntax_by_token(lang)
             .or_else(|| self.syntax_set.find_syntax_by_extension(lang))
             .or_else(|| Some(self.syntax_set.find_syntax_plain_text()));
@@ -109,7 +119,12 @@ static HIGHLIGHTER: OnceLock<Highlighter> = OnceLock::new();
 
 /// Highlight code and return a LayoutJob suitable for egui rendering.
 /// Returns None if highlighting fails (caller should fall back to plain text).
-pub fn highlight_code(code: &str, lang: &str, theme_name: &str, font_size: f32) -> Option<LayoutJob> {
+pub fn highlight_code(
+    code: &str,
+    lang: &str,
+    theme_name: &str,
+    font_size: f32,
+) -> Option<LayoutJob> {
     let highlighter = HIGHLIGHTER.get_or_init(Highlighter::new);
     highlighter.highlight(code, lang, theme_name, font_size)
 }

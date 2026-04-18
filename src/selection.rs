@@ -201,7 +201,8 @@ impl TextSelector {
                 if in_end_row {
                     highlight_rect.set_right(highlight_rect.right().min(end.x));
                 }
-                ui.painter().rect_filled(highlight_rect, 0.0, selection_color);
+                ui.painter()
+                    .rect_filled(highlight_rect, 0.0, selection_color);
             }
         }
     }

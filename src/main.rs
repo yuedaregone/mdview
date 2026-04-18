@@ -49,7 +49,6 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([900.0, 700.0])
             .with_min_inner_size([400.0, 300.0])
-            .with_visible(false) // Hidden until first frame renders
             .with_title("mdview"),
         ..Default::default()
     };
@@ -57,8 +56,9 @@ fn main() -> eframe::Result<()> {
     // Set window title to filename if provided
     if let Some(ref path) = args.file {
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            native_options.viewport =
-                native_options.viewport.with_title(format!("{} — mdview", name));
+            native_options.viewport = native_options
+                .viewport
+                .with_title(format!("{} — mdview", name));
         }
     }
 
