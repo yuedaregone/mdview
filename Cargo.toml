@@ -1,0 +1,26 @@
+[package]
+name = "mdview"
+version = "0.1.0"
+edition = "2021"
+description = "A blazingly fast, ultra-lightweight Markdown reader"
+license = "MIT"
+
+[dependencies]
+eframe = "0.31"
+egui = "0.31"
+comrak = { version = "0.39", default-features = false, features = ["shortcodes"] }
+syntect = "5.2"
+two-face = "0.4"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+open = "5"
+arboard = "3"
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+base64 = "0.22"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+opt-level = 3
+strip = true
