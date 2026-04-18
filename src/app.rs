@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use egui::*;
 
+use crate::config::AppConfig;
 use crate::image_loader::ImageLoader;
 use crate::markdown::cache::AstCache;
 use crate::markdown::parser::MarkdownDoc;
@@ -31,6 +32,8 @@ pub struct MdViewApp {
     ast_cache: AstCache,
     /// Error message to display
     error_msg: Option<String>,
+    /// App configuration
+    config: AppConfig,
 }
 
 impl MdViewApp {
@@ -39,6 +42,8 @@ impl MdViewApp {
         doc: Option<MarkdownDoc>,
         file_path: Option<PathBuf>,
     ) -> Self {
+        let config = AppConfig::load();
+
         let base_dir = file_path
             .as_ref()
             .and_then(|p| p.parent())
@@ -67,17 +72,30 @@ impl MdViewApp {
             .insert(0, "microsoft_yahei".to_owned());
         cc.egui_ctx.set_fonts(fonts);
 
+        let font_size = config.font_size;
+
+        // Find the theme from presets (returns static reference)
+        let theme = if let Some(ref theme_name) = config.theme_name {
+            Theme::all_themes()
+                .iter()
+                .find(|t| t.name == theme_name)
+                .unwrap_or_else(Theme::default_theme)
+        } else {
+            Theme::default_theme()
+        };
+
         Self {
             file_path,
             doc,
-            theme: Theme::default_theme(),
-            font_size: 16.0,
+            theme,
+            font_size,
             first_frame_shown: false,
             selector: TextSelector::new(),
             image_loader,
             viewport: ViewportState::new(0),
             ast_cache: AstCache::default(),
             error_msg: None,
+            config,
         }
     }
 
@@ -90,12 +108,21 @@ impl MdViewApp {
                 if let Some(dir) = path.parent() {
                     self.image_loader.set_base_dir(dir.to_path_buf());
                 }
-                self.file_path = Some(path);
+                self.file_path = Some(path.clone());
+                self.config.last_file = Some(path.to_string_lossy().to_string());
+                let _ = self.config.save();
             }
             Err(e) => {
                 self.error_msg = Some(format!("无法打开文件: {}", e));
             }
         }
+    }
+
+    /// Save current settings to config
+    pub fn save_config(&mut self) {
+        self.config.theme_name = Some(self.theme.name.to_string());
+        self.config.font_size = self.font_size;
+        let _ = self.config.save();
     }
 
     /// Copy selected text to clipboard
@@ -142,6 +169,40 @@ impl eframe::App for MdViewApp {
         if !self.first_frame_shown {
             self.first_frame_shown = true;
         }
+
+        // Handle keyboard shortcuts
+        let has_selection = self.selector.has_selection();
+        ctx.input(|input| {
+            if input.modifiers.ctrl {
+                // Ctrl+C - Copy selected text
+                if input.key_pressed(egui::Key::C) && has_selection {
+                    self.selector.copy_to_clipboard();
+                }
+                // Ctrl+= - Increase font size
+                if input.key_pressed(egui::Key::Equals) {
+                    self.font_size = (self.font_size + 2.0).min(32.0);
+                    self.save_config();
+                }
+                // Ctrl+- - Decrease font size
+                if input.key_pressed(egui::Key::Minus) {
+                    self.font_size = (self.font_size - 2.0).max(8.0);
+                    self.save_config();
+                }
+                // Ctrl+0 - Reset font size
+                if input.key_pressed(egui::Key::Num0) {
+                    self.font_size = 16.0;
+                    self.save_config();
+                }
+                // Ctrl+O - Open file directory
+                if input.key_pressed(egui::Key::O) {
+                    if let Some(path) = &self.file_path {
+                        if let Some(dir) = path.parent() {
+                            let _ = open::that(dir);
+                        }
+                    }
+                }
+            }
+        });
 
         // Handle dropped files
         let dropped_files = ctx.input(|i| i.raw.dropped_files.clone());
@@ -215,13 +276,65 @@ impl eframe::App for MdViewApp {
                                 .color(self.theme.muted_text()),
                         );
                         ui.add_space(8.0);
-                        ui.label(
-                            RichText::new("Drop a .md file here, or open from command line")
-                                .size(14.0)
-                                .color(self.theme.muted_text()),
-                        );
+                        if ui
+                            .button("Drop a .md file here, or open from command line")
+                            .clicked()
+                        {
+                            if let Some(dir) = self.file_path.as_ref().and_then(|p| p.parent()) {
+                                let _ = open::that(dir);
+                            }
+                        }
                     });
                 }
+
+                // Right-click context menu
+                let area_response = ui.interact(
+                    ui.max_rect(),
+                    egui::Id::new("mdview_area"),
+                    Sense::click_and_drag(),
+                );
+                area_response.context_menu(|ui| {
+                    if ui
+                        .add_enabled(self.selector.has_selection(), egui::Button::new("复制文本"))
+                        .clicked()
+                    {
+                        self.selector.copy_to_clipboard();
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    ui.menu_button("字体大小", |ui| {
+                        for size in [12.0, 14.0, 16.0, 18.0, 20.0] {
+                            let label = format!("{}px", size as i32);
+                            if self.font_size == size {
+                                ui.label(RichText::new(format!("▪ {}", label)).strong());
+                            } else if ui.button(&label).clicked() {
+                                self.font_size = size;
+                                self.save_config();
+                                ui.close_menu();
+                            }
+                        }
+                    });
+                    ui.menu_button("切换主题", |ui| {
+                        for theme in crate::theme::Theme::all_themes() {
+                            if std::ptr::eq(theme, self.theme) {
+                                ui.label(RichText::new(format!("[*] {}", theme.name)).strong());
+                            } else if ui.button(theme.name).clicked() {
+                                self.theme = theme;
+                                self.save_config();
+                                ui.close_menu();
+                            }
+                        }
+                    });
+                    ui.separator();
+                    if ui.button("打开文件目录").clicked() {
+                        if let Some(path) = &self.file_path {
+                            if let Some(dir) = path.parent() {
+                                let _ = open::that(dir);
+                            }
+                        }
+                        ui.close_menu();
+                    }
+                });
             });
     }
 }

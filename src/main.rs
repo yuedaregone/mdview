@@ -2,6 +2,7 @@ use clap::Parser;
 use std::path::PathBuf;
 
 mod app;
+mod config;
 mod image_loader;
 mod markdown;
 mod selection;
@@ -38,23 +39,41 @@ fn main() -> eframe::Result<()> {
         return Ok(());
     }
 
-    // Pre-parse markdown before window init for faster perceived startup
-    let doc = args
+    // Load config for window settings
+    let config = config::AppConfig::load();
+
+    // Use command line file if provided, otherwise use last opened file
+    let file_to_open = args
         .file
+        .clone()
+        .or_else(|| config.last_file.as_ref().map(PathBuf::from));
+
+    // Pre-parse markdown before window init for faster perceived startup
+    let doc = file_to_open
         .as_ref()
         .and_then(|p| std::fs::read_to_string(p).ok())
         .map(|content| markdown::parser::parse_full(&content));
 
+    let mut viewport_builder = egui::ViewportBuilder::default()
+        .with_inner_size([config.window_width, config.window_height])
+        .with_min_inner_size([400.0, 300.0])
+        .with_title("mdview");
+
+    if let (Some(x), Some(y)) = (config.window_x, config.window_y) {
+        viewport_builder = viewport_builder.with_position(egui::Pos2::new(x, y));
+    }
+
+    if config.maximized {
+        viewport_builder = viewport_builder.with_maximized(true);
+    }
+
     let mut native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([900.0, 700.0])
-            .with_min_inner_size([400.0, 300.0])
-            .with_title("mdview"),
+        viewport: viewport_builder,
         ..Default::default()
     };
 
     // Set window title to filename if provided
-    if let Some(ref path) = args.file {
+    if let Some(ref path) = file_to_open {
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
             native_options.viewport = native_options
                 .viewport
@@ -66,7 +85,7 @@ fn main() -> eframe::Result<()> {
         "mdview",
         native_options,
         Box::new(move |cc| {
-            let app = app::MdViewApp::new(cc, doc, args.file.clone());
+            let app = app::MdViewApp::new(cc, doc, file_to_open.clone());
             Ok(Box::new(app))
         }),
     )

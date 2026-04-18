@@ -1,7 +1,7 @@
 # mdview 待完成任务清单
 
 > 最后更新：2025-04-18
-> 已完成 32/37，剩余 5 项
+> 已完成 37/39，剩余 2 项
 
 ---
 
@@ -13,16 +13,17 @@
 - **方案**: 在 `app.rs` 的 `update()` 中通过 `ctx.input()` 检测快捷键
 - **快捷键列表**:
   - `Ctrl+C` — 复制选中文本
-  - `Ctrl+=` / `Ctrl+Plus` — 增大字体
+  - `Ctrl+=` — 增大字体
   - `Ctrl+-` — 缩小字体
   - `Ctrl+0` — 重置字体为默认 16px
-  - `Ctrl+O` — 打开文件对话框
-  - `Ctrl+Q` — 退出
+  - `Ctrl+O` — 打开文件目录
+- **状态**: 已完成
 
 ### #34 右键菜单复制按钮应反映选中状态
 - **优先级**: 中
 - **问题**: "复制文本"按钮始终可见且可点击，即使没有选中任何文本
 - **方案**: 用 `ui.add_enabled(selector.has_selection(), ...)` 替代 `ui.button()`
+- **状态**: 已完成
 
 ### #35 清理空模块和死代码
 - **优先级**: 中
@@ -31,6 +32,11 @@
   1. `src/widgets/mod.rs` 空模块 — `main.rs` 中 `mod widgets` 也应移除
   2. `src/markdown/cache.rs` 中 `BlockHeightCache` 从未被使用 — 整个结构体及方法应删除
   3. `src/markdown/parser.rs` 中 `parse()` 函数不处理表格，只应保留 `parse_full()`
+
+### #38 Viewport Culling 调试
+- **优先级**: 中
+- **问题**: 视口裁剪功能之前因为调试被禁用，需要重新启用并验证正常工作
+- **方案**: 恢复 `renderer.rs` 中的 viewport culling 代码，添加调试日志
 
 ### #36 文件修改后自动刷新
 - **优先级**: 中

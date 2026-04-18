@@ -5,7 +5,7 @@ use egui::Color32;
 pub use presets::PRESETS;
 
 /// Theme definition for the markdown reader
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 #[allow(dead_code)]
 pub struct Theme {
     pub name: &'static str,
