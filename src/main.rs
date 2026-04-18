@@ -69,6 +69,7 @@ fn main() -> eframe::Result<()> {
 
     let mut native_options = eframe::NativeOptions {
         viewport: viewport_builder,
+        persist_window: false,
         ..Default::default()
     };
 

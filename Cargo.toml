@@ -6,7 +6,7 @@ description = "A blazingly fast, ultra-lightweight Markdown reader"
 license = "MIT"
 
 [dependencies]
-eframe = "0.31"
+eframe = { version = "0.31", features = ["persistence"] }
 egui = "0.31"
 comrak = { version = "0.39", default-features = false, features = ["shortcodes"] }
 syntect = "5.2"

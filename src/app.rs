@@ -160,6 +160,13 @@ impl MdViewApp {
 
 impl eframe::App for MdViewApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        // Save window size
+        let size = ctx.available_rect();
+        if size.width() > 0.0 && size.height() > 0.0 {
+            self.config.window_width = size.width();
+            self.config.window_height = size.height();
+        }
+
         self.apply_theme(ctx);
         if self.image_loader.poll() {
             ctx.request_repaint();
@@ -221,10 +228,17 @@ impl eframe::App for MdViewApp {
         CentralPanel::default()
             .frame(Frame::NONE.fill(self.theme.background))
             .show(ctx, |ui| {
+                let area_response = ui.interact(
+                    ui.max_rect(),
+                    egui::Id::new("mdview_area"),
+                    Sense::click_and_drag(),
+                );
+
                 if let Some(doc) = &self.doc {
                     let scroll_output = ScrollArea::vertical()
                         .id_salt(("mdview_scroll", self.file_path.clone()))
                         .auto_shrink([false, false])
+                        .drag(true)
                         .show(ui, |ui| {
                             ui.horizontal_top(|ui| {
                                 ui.add_space(32.0);
@@ -317,7 +331,7 @@ impl eframe::App for MdViewApp {
                     ui.menu_button("切换主题", |ui| {
                         for theme in crate::theme::Theme::all_themes() {
                             if std::ptr::eq(theme, self.theme) {
-                                ui.label(RichText::new(format!("[*] {}", theme.name)).strong());
+                                ui.label(RichText::new(format!("▪ {}", theme.name)).strong());
                             } else if ui.button(theme.name).clicked() {
                                 self.theme = theme;
                                 self.save_config();
@@ -336,5 +350,9 @@ impl eframe::App for MdViewApp {
                     }
                 });
             });
+    }
+
+    fn save(&mut self, _storage: &mut dyn eframe::Storage) {
+        let _ = self.config.save();
     }
 }
