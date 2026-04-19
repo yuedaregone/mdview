@@ -568,58 +568,53 @@ fn render_footnote_def(
 // ─── Inline Rendering ───────────────────────────────────────────────────────
 
 /// Render inline nodes as a single text block with link clicking support.
-/// Links are rendered with underline styling; clicking a link opens it in the system browser.
+/// Uses ui.label() for native selection, ui.interact() for link hit testing.
 fn render_inlines(
     ui: &mut Ui,
     inlines: &[InlineNode],
     theme: &Theme,
     font_size: f32,
     default_color: Color32,
-    _selector: &mut TextSelector,
+    selector: &mut TextSelector,
 ) {
     let max_width = ui.available_width();
     let (job, links) = inlines_to_rich_text(inlines, theme, font_size, default_color, max_width);
+    let plain_text = job.text.clone();
 
-    if links.is_empty() {
-        // No links — simple label
-        ui.label(job);
+    // Layout for link hit testing
+    let galley = if !links.is_empty() {
+        Some(ui.fonts(|f| f.layout_job(job.clone())))
     } else {
-        // Has links — render with galley and detect clicks on link regions
-        let galley = ui.ctx().fonts(|f| f.layout_job(job));
+        None
+    };
 
-        let (rect, response) = ui.allocate_exact_size(galley.size(), Sense::click());
-        ui.painter().galley(rect.min, galley.clone(), default_color);
+    // Use Label: preserve native text selection
+    let label_response = ui.label(job);
+    let rect = label_response.rect;
 
-        // Check for clicks on link regions
-        if response.clicked() {
-            if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
-                let local_pos = pos - rect.min;
-                let cursor = galley.cursor_from_pos(local_pos);
-                let char_idx = cursor.ccursor.index;
+    // Link hit test: overlay independent click layer on same rect
+    if let Some(galley) = galley {
+        let link_resp = ui.interact(rect, ui.id().with("link_layer"), Sense::click());
+
+        if let Some(hover_pos) = ui.input(|i| i.pointer.hover_pos()) {
+            if rect.contains(hover_pos) {
+                let rel = hover_pos - rect.min;
+                let char_idx = galley.cursor_from_pos(rel).ccursor.index;
+
                 for (url, range) in &links {
                     if range.contains(&char_idx) {
-                        let _ = open::that(url);
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Handle hover cursor on links — show pointer when over a link
-        if response.hovered() {
-            if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
-                let local_pos = pos - rect.min;
-                let cursor = galley.cursor_from_pos(local_pos);
-                let char_idx = cursor.ccursor.index;
-                for (_url, range) in &links {
-                    if range.contains(&char_idx) {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        if link_resp.clicked() {
+                            let _ = open::that(url);
+                        }
                         break;
                     }
                 }
             }
         }
     }
+
+    selector.add_segment(rect, plain_text, 0);
 }
 
 /// Convert inline nodes to a LayoutJob with proper inline formatting.
@@ -721,27 +716,14 @@ fn append_inlines_to_job(
                 );
             }
             InlineNode::Link { url, children, .. } => {
-                // Record the char range for this link's text (character index, not byte)
                 let link_start = job.text.chars().count();
                 let link_style = style;
-                // Render children with link color
                 append_inlines_to_job(
                     children, theme, font_size, theme.link, job, link_style, links, true,
                 );
                 let link_end = job.text.chars().count();
-                // Record this link (url, char_range)
-                links.push((url.clone(), link_start..link_end));
-                // Optionally show URL if different from link text
-                let link_text: String = children.iter().map(|n| n.plain_text()).collect();
-                if link_text != *url && !url.is_empty() {
-                    push_section(
-                        job,
-                        &format!(" ({})", url),
-                        font_size * 0.8,
-                        theme.muted_text(),
-                        FontStyle::NORMAL,
-                        false,
-                    );
+                if !url.is_empty() {
+                    links.push((url.clone(), link_start..link_end));
                 }
             }
             InlineNode::Image { alt, .. } => {
