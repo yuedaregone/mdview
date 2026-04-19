@@ -63,10 +63,10 @@ fn render_block(
 ) {
     match node {
         DocNode::Heading { level, children } => {
-            render_heading(ui, *level, children, theme, font_size, selector);
+            render_heading(ui, *level, children, theme, font_size, selector, index);
         }
         DocNode::Paragraph(inlines) => {
-            render_paragraph(ui, inlines, theme, font_size, selector);
+            render_paragraph(ui, inlines, theme, font_size, selector, index);
         }
         DocNode::CodeBlock { lang, code } => {
             render_code_block(ui, lang, code, theme, font_size, index);
@@ -114,11 +114,20 @@ fn render_heading(
     theme: &Theme,
     font_size: f32,
     selector: &mut TextSelector,
+    block_index: usize,
 ) {
     let size = theme.heading_size(level, font_size);
     ui.add_space(8.0);
     let before = ui.cursor().min;
-    render_inlines(ui, children, theme, size, theme.heading, selector);
+    render_inlines(
+        ui,
+        children,
+        theme,
+        size,
+        theme.heading,
+        selector,
+        block_index,
+    );
     let after = ui.cursor().min;
     // Record text segment for selection
     let plain = children.iter().map(|n| n.plain_text()).collect::<String>();
@@ -135,9 +144,18 @@ fn render_paragraph(
     theme: &Theme,
     font_size: f32,
     selector: &mut TextSelector,
+    block_index: usize,
 ) {
     let before = ui.cursor().min;
-    render_inlines(ui, inlines, theme, font_size, theme.foreground, selector);
+    render_inlines(
+        ui,
+        inlines,
+        theme,
+        font_size,
+        theme.foreground,
+        selector,
+        block_index,
+    );
     let after = ui.cursor().min;
     let plain = inlines.iter().map(|n| n.plain_text()).collect::<String>();
     let rect = egui::Rect::from_min_max(before, egui::pos2(ui.max_rect().right(), after.y));
@@ -250,6 +268,8 @@ fn render_table(
     });
 }
 
+static TABLE_CELL_INDEX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 fn render_table_cell(
     ui: &mut Ui,
     cell: &TableCell,
@@ -258,6 +278,7 @@ fn render_table_cell(
     font_size: f32,
     is_header: bool,
 ) {
+    let cell_index = TABLE_CELL_INDEX.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let layout = match align {
         Align::Center => Layout::centered_and_justified(egui::Direction::TopDown),
         Align::Right => Layout::right_to_left(egui::Align::Center),
@@ -280,6 +301,7 @@ fn render_table_cell(
                     font_size,
                     theme.foreground,
                     &mut TextSelector::new(),
+                    cell_index,
                 );
             });
     });
@@ -338,6 +360,8 @@ fn render_block_quote(
 
 // ─── Lists ──────────────────────────────────────────────────────────────────
 
+static LIST_ITEM_INDEX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 fn render_ordered_list(
     ui: &mut Ui,
     start: u64,
@@ -348,6 +372,7 @@ fn render_ordered_list(
     selector: &mut TextSelector,
 ) {
     for (i, item) in items.iter().enumerate() {
+        let mut idx = LIST_ITEM_INDEX.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let num = start + i as u64;
         ui.horizontal(|ui| {
             ui.add_space(16.0);
@@ -359,7 +384,8 @@ fn render_ordered_list(
             ui.add_space(4.0);
             ui.vertical(|ui| {
                 for child in &item.children {
-                    render_block(ui, child, theme, font_size, 0, image_loader, selector);
+                    render_block(ui, child, theme, font_size, idx, image_loader, selector);
+                    idx += 1;
                 }
             });
         });
@@ -375,14 +401,15 @@ fn render_unordered_list_ui(
     selector: &mut TextSelector,
 ) {
     for item in items {
+        let mut idx = LIST_ITEM_INDEX.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         ui.horizontal(|ui| {
             ui.add_space(16.0);
-            // Bullet character
             ui.label(RichText::new("•").size(font_size).color(theme.list_marker));
             ui.add_space(4.0);
             ui.vertical(|ui| {
                 for child in &item.children {
-                    render_block(ui, child, theme, font_size, 0, image_loader, selector);
+                    render_block(ui, child, theme, font_size, idx, image_loader, selector);
+                    idx += 1;
                 }
             });
         });
@@ -576,6 +603,7 @@ fn render_inlines(
     font_size: f32,
     default_color: Color32,
     selector: &mut TextSelector,
+    block_index: usize,
 ) {
     let max_width = ui.available_width();
     let (job, links) = inlines_to_rich_text(inlines, theme, font_size, default_color, max_width);
@@ -589,12 +617,13 @@ fn render_inlines(
     };
 
     // Use Label: preserve native text selection
+    let id = egui::Id::new(("inline", block_index));
     let label_response = ui.label(job);
     let rect = label_response.rect;
 
     // Link hit test: overlay independent click layer on same rect
     if let Some(galley) = galley {
-        let link_resp = ui.interact(rect, ui.id().with("link_layer"), Sense::click());
+        let link_resp = ui.interact(rect, id.with("link"), Sense::click());
 
         if let Some(hover_pos) = ui.input(|i| i.pointer.hover_pos()) {
             if rect.contains(hover_pos) {
