@@ -228,17 +228,10 @@ impl eframe::App for MdViewApp {
         CentralPanel::default()
             .frame(Frame::NONE.fill(self.theme.background))
             .show(ctx, |ui| {
-                let area_response = ui.interact(
-                    ui.max_rect(),
-                    egui::Id::new("mdview_area"),
-                    Sense::click_and_drag(),
-                );
-
                 if let Some(doc) = &self.doc {
                     let scroll_output = ScrollArea::vertical()
                         .id_salt(("mdview_scroll", self.file_path.clone()))
                         .auto_shrink([false, false])
-                        .drag(true)
                         .show(ui, |ui| {
                             ui.horizontal_top(|ui| {
                                 ui.add_space(32.0);
@@ -262,6 +255,65 @@ impl eframe::App for MdViewApp {
                         });
                     self.viewport.scroll_offset = scroll_output.state.offset.y;
                     self.viewport.viewport_height = scroll_output.inner_rect.height();
+
+                    // Use click for right-click detection (doesn't block scrollbar much)
+                    let area_response = ui.interact(
+                        ui.max_rect(),
+                        egui::Id::new("mdview_content"),
+                        Sense::click(),
+                    );
+
+                    // Handle text selection via raw input events (for copy)
+                    self.selector
+                        .handle_input_raw(ctx, self.viewport.scroll_offset);
+                    // Don't draw - use egui's built-in selection highlight
+
+                    // Right-click context menu - check for right-click without dragging
+                    area_response.context_menu(|ui| {
+                        if ui
+                            .add_enabled(
+                                self.selector.has_selection(),
+                                egui::Button::new("复制文本"),
+                            )
+                            .clicked()
+                        {
+                            self.selector.copy_to_clipboard();
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        ui.menu_button("字体大小", |ui| {
+                            for size in [12.0, 14.0, 16.0, 18.0, 20.0] {
+                                let label = format!("{}px", size as i32);
+                                if self.font_size == size {
+                                    ui.label(RichText::new(format!("▪ {}", label)).strong());
+                                } else if ui.button(&label).clicked() {
+                                    self.font_size = size;
+                                    self.save_config();
+                                    ui.close_menu();
+                                }
+                            }
+                        });
+                        ui.menu_button("切换主题", |ui| {
+                            for theme in crate::theme::Theme::all_themes() {
+                                if std::ptr::eq(theme, self.theme) {
+                                    ui.label(RichText::new(format!("▪ {}", theme.name)).strong());
+                                } else if ui.button(theme.name).clicked() {
+                                    self.theme = theme;
+                                    self.save_config();
+                                    ui.close_menu();
+                                }
+                            }
+                        });
+                        ui.separator();
+                        if ui.button("打开文件目录").clicked() {
+                            if let Some(path) = &self.file_path {
+                                if let Some(dir) = path.parent() {
+                                    let _ = open::that(dir);
+                                }
+                            }
+                            ui.close_menu();
+                        }
+                    });
                 } else if let Some(err) = self.error_msg.clone() {
                     ui.vertical_centered(|ui| {
                         ui.add_space(ui.available_height() / 3.0);
@@ -300,55 +352,6 @@ impl eframe::App for MdViewApp {
                         }
                     });
                 }
-
-                // Right-click context menu
-                let area_response = ui.interact(
-                    ui.max_rect(),
-                    egui::Id::new("mdview_area"),
-                    Sense::click_and_drag(),
-                );
-                area_response.context_menu(|ui| {
-                    if ui
-                        .add_enabled(self.selector.has_selection(), egui::Button::new("复制文本"))
-                        .clicked()
-                    {
-                        self.selector.copy_to_clipboard();
-                        ui.close_menu();
-                    }
-                    ui.separator();
-                    ui.menu_button("字体大小", |ui| {
-                        for size in [12.0, 14.0, 16.0, 18.0, 20.0] {
-                            let label = format!("{}px", size as i32);
-                            if self.font_size == size {
-                                ui.label(RichText::new(format!("▪ {}", label)).strong());
-                            } else if ui.button(&label).clicked() {
-                                self.font_size = size;
-                                self.save_config();
-                                ui.close_menu();
-                            }
-                        }
-                    });
-                    ui.menu_button("切换主题", |ui| {
-                        for theme in crate::theme::Theme::all_themes() {
-                            if std::ptr::eq(theme, self.theme) {
-                                ui.label(RichText::new(format!("▪ {}", theme.name)).strong());
-                            } else if ui.button(theme.name).clicked() {
-                                self.theme = theme;
-                                self.save_config();
-                                ui.close_menu();
-                            }
-                        }
-                    });
-                    ui.separator();
-                    if ui.button("打开文件目录").clicked() {
-                        if let Some(path) = &self.file_path {
-                            if let Some(dir) = path.parent() {
-                                let _ = open::that(dir);
-                            }
-                        }
-                        ui.close_menu();
-                    }
-                });
             });
     }
 

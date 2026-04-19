@@ -4,7 +4,7 @@
 //! Collects text segment positions during rendering, supports mouse drag selection,
 //! and copies selected text to clipboard via arboard.
 
-use egui::{Pos2, Rect, Response, Ui};
+use egui::{pos2, Context, Pos2, Rect, Response, Ui};
 
 /// A segment of rendered text with its screen position
 #[derive(Debug, Clone)]
@@ -58,6 +58,32 @@ impl TextSelector {
                 block_index,
             });
         }
+    }
+
+    /// Handle mouse input for selection using raw events.
+    /// Takes scroll_offset to convert screen coordinates to document coordinates.
+    pub fn handle_input_raw(&mut self, ctx: &Context, scroll_offset: f32) {
+        ctx.input(|input| {
+            let pointer = &input.pointer;
+
+            if pointer.primary_down() {
+                if let Some(pos) = pointer.interact_pos() {
+                    // Convert screen coordinate to document coordinate (subtract scroll offset)
+                    let doc_pos = pos2(pos.x, pos.y - scroll_offset);
+                    if !self.selecting {
+                        self.selecting = true;
+                        self.start = Some(doc_pos);
+                        self.end = Some(doc_pos);
+                        self.selected_text.clear();
+                    } else {
+                        self.end = Some(doc_pos);
+                        self.update_selected_text();
+                    }
+                }
+            } else {
+                self.selecting = false;
+            }
+        });
     }
 
     /// Handle mouse input for selection. Call this after rendering.
@@ -159,8 +185,9 @@ impl TextSelector {
         }
     }
 
-    /// Draw selection highlights over selected segments
-    pub fn draw_selection(&self, ui: &mut Ui, selection_color: egui::Color32) {
+    /// Draw selection highlights over selected segments.
+    /// Takes scroll_offset to convert document coordinates to screen coordinates.
+    pub fn draw_selection(&self, ui: &mut Ui, scroll_offset: f32, selection_color: egui::Color32) {
         if self.start.is_none() || self.end.is_none() || self.selected_text.is_empty() {
             return;
         }
@@ -171,35 +198,43 @@ impl TextSelector {
             _ => return,
         };
 
-        for seg in &self.segments {
-            let seg_top = seg.rect.top();
-            let seg_bottom = seg.rect.bottom();
+        // Convert document selection coordinates to screen coordinates
+        let screen_start = pos2(start.x, start.y + scroll_offset);
+        let screen_end = pos2(end.x, end.y + scroll_offset);
 
-            if seg_top > end.y || seg_bottom < start.y {
+        for seg in &self.segments {
+            // Segments are in document coordinates, add scroll_offset for screen comparison
+            let seg_top = seg.rect.top() + scroll_offset;
+            let seg_bottom = seg.rect.bottom() + scroll_offset;
+
+            if seg_top > screen_end.y || seg_bottom < screen_start.y {
                 continue;
             }
 
-            let in_start_row = seg_top <= start.y && seg_bottom >= start.y;
-            let in_end_row = seg_top <= end.y && seg_bottom >= end.y;
+            let in_start_row = seg_top <= screen_start.y && seg_bottom >= screen_start.y;
+            let in_end_row = seg_top <= screen_end.y && seg_bottom >= screen_end.y;
 
             let overlaps = if in_start_row && in_end_row {
-                seg.rect.right() >= start.x && seg.rect.left() <= end.x
+                seg.rect.right() >= screen_start.x && seg.rect.left() <= screen_end.x
             } else if in_start_row {
-                seg.rect.right() >= start.x
+                seg.rect.right() >= screen_start.x
             } else if in_end_row {
-                seg.rect.left() <= end.x
+                seg.rect.left() <= screen_end.x
             } else {
                 true
             };
 
             if overlaps {
-                // Draw selection highlight behind the text
+                // Draw highlight at segment position in screen coordinates
                 let mut highlight_rect = seg.rect;
+                highlight_rect.set_top(seg_top);
+                highlight_rect.set_bottom(seg_bottom);
+
                 if in_start_row {
-                    highlight_rect.set_left(highlight_rect.left().max(start.x));
+                    highlight_rect.set_left(highlight_rect.left().max(screen_start.x));
                 }
                 if in_end_row {
-                    highlight_rect.set_right(highlight_rect.right().min(end.x));
+                    highlight_rect.set_right(highlight_rect.right().min(screen_end.x));
                 }
                 ui.painter()
                     .rect_filled(highlight_rect, 0.0, selection_color);
