@@ -303,6 +303,7 @@ impl eframe::App for MdViewApp {
                     let scroll_output = ScrollArea::vertical()
                         .id_salt(("mdview_scroll", self.file_path.clone()))
                         .auto_shrink([false, false])
+                        .drag_to_scroll(false)
                         .show(ui, |ui| {
                             ui.horizontal_top(|ui| {
                                 let total_width = ui.available_width();
