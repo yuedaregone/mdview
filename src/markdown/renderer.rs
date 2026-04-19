@@ -617,14 +617,12 @@ fn render_inlines(
     };
 
     // Use Label: preserve native text selection
-    let id = egui::Id::new(("inline", block_index));
     let label_response = ui.label(job);
     let rect = label_response.rect;
 
-    // Link hit test: overlay independent click layer on same rect
-    if let Some(galley) = galley {
-        let link_resp = ui.interact(rect, id.with("link"), Sense::click());
-
+    // Link hit test using raw input
+    if let Some(ref galley) = galley {
+        // Hover detection
         if let Some(hover_pos) = ui.input(|i| i.pointer.hover_pos()) {
             if rect.contains(hover_pos) {
                 let rel = hover_pos - rect.min;
@@ -633,10 +631,29 @@ fn render_inlines(
                 for (url, range) in &links {
                     if range.contains(&char_idx) {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                        if link_resp.clicked() {
+                    }
+                }
+            }
+        }
+
+        // Click detection using different approach: check on DOWN event
+        let down = ui.input(|i| i.pointer.primary_down());
+        let interact_pos = ui.input(|i| i.pointer.interact_pos());
+
+        // When mouse goes DOWN on a link, we'll open it
+        if down {
+            if let Some(pos) = interact_pos {
+                if rect.contains(pos) {
+                    eprintln!("DEBUG: mouse down on link rect={:?}, pos={:?}", rect, pos);
+                    let rel = pos - rect.min;
+                    let char_idx = galley.cursor_from_pos(rel).ccursor.index;
+
+                    for (url, range) in &links {
+                        if range.contains(&char_idx) {
+                            eprintln!("DEBUG: mouse down on URL: {}", url);
+                            // Open immediately on mouse down
                             let _ = open::that(url);
                         }
-                        break;
                     }
                 }
             }
