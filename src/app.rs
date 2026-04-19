@@ -34,8 +34,6 @@ pub struct MdViewApp {
     error_msg: Option<String>,
     /// App configuration
     config: AppConfig,
-    /// Window titlebar height
-    titlebar_height: f32,
     /// Whether window is maximized
     window_maximized: bool,
     /// Last file modification time
@@ -104,10 +102,9 @@ impl MdViewApp {
             ast_cache: AstCache::default(),
             error_msg: None,
             config,
-            titlebar_height: 36.0,
-            window_maximized: false,
             last_mtime: None,
             last_check_time: 0.0,
+            window_maximized: false,
         }
     }
 
@@ -174,16 +171,26 @@ impl MdViewApp {
 
 impl eframe::App for MdViewApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        // Save window size (only when not maximized)
-        let size = ctx.available_rect();
-        if size.width() > 0.0 && size.height() > 0.0 && !self.window_maximized {
-            self.config.window_width = size.width();
-            self.config.window_height = size.height();
-        }
-
-        // Track maximized state
+        // Track maximized state FIRST
         let currently_maximized = ctx.input(|i| i.viewport().maximized).unwrap_or(false);
-        self.window_maximized = currently_maximized;
+
+        // Save config when maximized state changes or window size changes
+        if currently_maximized != self.window_maximized {
+            self.window_maximized = currently_maximized;
+            self.config.maximized = currently_maximized;
+            let _ = self.config.save();
+        } else if !currently_maximized {
+            let size = ctx.available_rect();
+            if size.width() > 0.0
+                && size.height() > 0.0
+                && (size.width() != self.config.window_width
+                    || size.height() != self.config.window_height)
+            {
+                self.config.window_width = size.width();
+                self.config.window_height = size.height();
+                let _ = self.config.save();
+            }
+        }
 
         self.apply_theme(ctx);
         if self.image_loader.poll() {
@@ -268,107 +275,9 @@ impl eframe::App for MdViewApp {
             }
         }
 
-        // Custom titlebar using Area for frameless window
-        let avail_rect = ctx.available_rect();
-        let titlebar_width = avail_rect.width();
-
-        let titlebar_area = egui::Area::new(egui::Id::new("titlebar"))
-            .anchor(egui::Align2::LEFT_TOP, [0.0, 0.0])
-            .interactable(true);
-
-        titlebar_area.show(ctx, |ui| {
-            ui.set_height(self.titlebar_height);
-            ui.set_width(titlebar_width);
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::LEFT), |ui| {
-                // Draggable title area
-                let title = self
-                    .file_path
-                    .as_ref()
-                    .and_then(|p| p.file_name().and_then(|n| n.to_str()))
-                    .unwrap_or("mdview");
-                let title_label =
-                    egui::Label::new(RichText::new(title).color(self.theme.foreground));
-                let title_resp = ui.add(title_label.sense(Sense::drag()));
-                if title_resp.is_pointer_button_down_on() {
-                    ctx.send_viewport_cmd(ViewportCommand::StartDrag);
-                }
-            });
-
-            // Place window buttons at right side
-            let buttons_area = egui::Area::new(egui::Id::new("window_buttons"))
-                .anchor(egui::Align2::RIGHT_TOP, [-4.0, 0.0]);
-
-            let btn_size = 28.0;
-            let fg = self.theme.foreground;
-
-            buttons_area.show(ctx, |ui| {
-                ui.set_height(self.titlebar_height);
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::RIGHT), |ui| {
-                    // Minimize button
-                    let min_btn =
-                        ui.allocate_response(egui::vec2(btn_size, btn_size), Sense::click());
-                    if min_btn.is_pointer_button_down_on() {
-                        ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
-                    }
-                    ui.painter().text(
-                        min_btn.rect.center(),
-                        egui::Align2::CENTER_TOP,
-                        "─",
-                        egui::FontId::proportional(14.0),
-                        fg,
-                    );
-
-                    // Maximize/Restore button
-                    ui.add_space(4.0);
-                    let max_btn =
-                        ui.allocate_response(egui::vec2(btn_size, btn_size), Sense::click());
-                    if max_btn.is_pointer_button_down_on() {
-                        ctx.send_viewport_cmd(ViewportCommand::Maximized(!self.window_maximized));
-                    }
-                    let max_icon = if self.window_maximized { "❐" } else { "□" };
-                    ui.painter().text(
-                        max_btn.rect.center(),
-                        egui::Align2::CENTER_TOP,
-                        max_icon,
-                        egui::FontId::proportional(14.0),
-                        fg,
-                    );
-
-                    // Close button
-                    ui.add_space(4.0);
-                    let close_btn =
-                        ui.allocate_response(egui::vec2(btn_size, btn_size), Sense::click());
-                    if close_btn.is_pointer_button_down_on() {
-                        ctx.send_viewport_cmd(ViewportCommand::Close);
-                    }
-                    // Draw X for close button
-                    let close_rect = close_btn.rect;
-                    let x_color = fg;
-                    // Draw X shape
-                    ui.painter().line_segment(
-                        [
-                            close_rect.left_top() + egui::vec2(6.0, 6.0),
-                            close_rect.right_bottom() - egui::vec2(6.0, 6.0),
-                        ],
-                        Stroke::new(2.0, x_color),
-                    );
-                    ui.painter().line_segment(
-                        [
-                            close_rect.left_bottom() + egui::vec2(6.0, -6.0),
-                            close_rect.right_top() - egui::vec2(6.0, -6.0),
-                        ],
-                        Stroke::new(2.0, x_color),
-                    );
-                });
-            });
-        });
-
         CentralPanel::default()
             .frame(Frame::NONE.fill(self.theme.background))
             .show(ctx, |ui| {
-                // Leave space for titlebar
-                ui.add_space(self.titlebar_height);
-
                 if let Some(doc) = &self.doc {
                     let scroll_output = ScrollArea::vertical()
                         .id_salt(("mdview_scroll", self.file_path.clone()))
