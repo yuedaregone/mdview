@@ -577,7 +577,8 @@ fn render_inlines(
     default_color: Color32,
     _selector: &mut TextSelector,
 ) {
-    let (job, links) = inlines_to_rich_text(inlines, theme, font_size, default_color);
+    let max_width = ui.available_width();
+    let (job, links) = inlines_to_rich_text(inlines, theme, font_size, default_color, max_width);
 
     if links.is_empty() {
         // No links — simple label
@@ -630,10 +631,11 @@ fn inlines_to_rich_text(
     theme: &Theme,
     font_size: f32,
     default_color: Color32,
+    max_width: f32,
 ) -> (egui::text::LayoutJob, Vec<(String, std::ops::Range<usize>)>) {
     let mut job = egui::text::LayoutJob::default();
     job.text = String::new();
-    job.wrap = egui::text::TextWrapping::no_max_width();
+    job.wrap = egui::text::TextWrapping::wrap_at_width(max_width.max(100.0));
 
     let mut links = Vec::new();
     append_inlines_to_job(
