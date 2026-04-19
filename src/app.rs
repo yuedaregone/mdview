@@ -136,20 +136,6 @@ impl MdViewApp {
         let _ = self.config.save();
     }
 
-    /// Copy selected text to clipboard
-    fn copy_selected_text(&self) {
-        self.selector.copy_to_clipboard();
-    }
-
-    /// Open the directory containing the current file
-    fn open_file_directory(&self) {
-        if let Some(path) = &self.file_path {
-            if let Some(dir) = path.parent() {
-                let _ = open::that(dir);
-            }
-        }
-    }
-
     /// Apply theme to egui visuals
     fn apply_theme(&self, ctx: &Context) {
         let mut visuals = if self.theme.is_dark {

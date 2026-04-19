@@ -24,7 +24,7 @@ tracing = "0.1"
 rfd = "0.15"
 
 [profile.release]
-lto = "thin"
+lto = "fat"
 codegen-units = 1
 panic = "abort"
 opt-level = 3
