@@ -10,6 +10,7 @@ pub struct AppConfig {
     pub maximized: bool,
     pub theme_name: Option<String>,
     pub font_size: f32,
+    pub font_name: Option<String>,
     pub last_file: Option<String>,
 }
 
@@ -23,6 +24,7 @@ impl Default for AppConfig {
             maximized: false,
             theme_name: None,
             font_size: 16.0,
+            font_name: None,
             last_file: None,
         }
     }

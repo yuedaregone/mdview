@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 
 use egui::*;
+use font_kit::family_name::FamilyName;
+use font_kit::properties::Properties;
+use font_kit::source::SystemSource;
 
 use crate::config::AppConfig;
 use crate::image_loader::ImageLoader;
@@ -9,6 +12,56 @@ use crate::markdown::parser::MarkdownDoc;
 use crate::selection::TextSelector;
 use crate::theme::Theme;
 use crate::viewport::ViewportState;
+
+fn load_system_font(name: Option<&str>) -> Option<(String, Vec<u8>)> {
+    let source = SystemSource::new();
+
+    let families = if let Some(name) = name {
+        vec![FamilyName::Title(name.to_string())]
+    } else {
+        vec![
+            FamilyName::Title("Microsoft YaHei".to_string()),
+            FamilyName::Title("PingFang SC".to_string()),
+            FamilyName::Title("Noto Sans CJK SC".to_string()),
+            FamilyName::Title("Segoe UI".to_string()),
+            FamilyName::SansSerif,
+        ]
+    };
+
+    let handle = source
+        .select_best_match(&families, &Properties::new())
+        .ok()?;
+
+    let data = handle.load().ok()?.copy_font_data()?.to_vec();
+    let font_name = name.unwrap_or("system").to_string();
+
+    Some((font_name, data))
+}
+
+fn setup_fonts(ctx: &egui::Context, font_name: Option<&str>) {
+    let mut fonts = egui::FontDefinitions::empty();
+
+    if let Some((name, data)) = load_system_font(font_name) {
+        fonts.font_data.insert(
+            name.clone(),
+            std::sync::Arc::new(egui::FontData::from_owned(data)),
+        );
+
+        fonts
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default()
+            .insert(0, name.clone());
+
+        fonts
+            .families
+            .entry(egui::FontFamily::Monospace)
+            .or_default()
+            .insert(0, name.clone());
+    }
+
+    ctx.set_fonts(fonts);
+}
 
 /// Main application state
 pub struct MdViewApp {
@@ -59,24 +112,7 @@ impl MdViewApp {
         let mut image_loader = ImageLoader::new(base_dir);
         image_loader.set_context(cc.egui_ctx.clone());
 
-        let mut fonts = egui::FontDefinitions::default();
-        fonts.font_data.insert(
-            "microsoft_yahei".to_owned(),
-            std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
-                "../fonts/msyh.ttc"
-            ))),
-        );
-        fonts
-            .families
-            .entry(egui::FontFamily::Proportional)
-            .or_default()
-            .insert(0, "microsoft_yahei".to_owned());
-        fonts
-            .families
-            .entry(egui::FontFamily::Monospace)
-            .or_default()
-            .insert(0, "microsoft_yahei".to_owned());
-        cc.egui_ctx.set_fonts(fonts);
+        setup_fonts(&cc.egui_ctx, config.font_name.as_deref());
 
         let font_size = config.font_size;
 

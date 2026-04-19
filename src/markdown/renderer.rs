@@ -603,7 +603,7 @@ fn render_inlines(
     font_size: f32,
     default_color: Color32,
     selector: &mut TextSelector,
-    block_index: usize,
+    _block_index: usize,
 ) {
     let max_width = ui.available_width();
     let (job, links) = inlines_to_rich_text(inlines, theme, font_size, default_color, max_width);
@@ -629,6 +629,7 @@ fn render_inlines(
                 let char_idx = galley.cursor_from_pos(rel).ccursor.index;
 
                 for (url, range) in &links {
+                    let _ = url;
                     if range.contains(&char_idx) {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     }
