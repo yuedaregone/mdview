@@ -620,9 +620,9 @@ fn render_inlines(
     let label_response = ui.label(job);
     let rect = label_response.rect;
 
-    // Link hit test using raw input
+    // Link hit test
     if let Some(ref galley) = galley {
-        // Hover detection
+        // Hover: show pointer hand
         if let Some(hover_pos) = ui.input(|i| i.pointer.hover_pos()) {
             if rect.contains(hover_pos) {
                 let rel = hover_pos - rect.min;
@@ -636,23 +636,26 @@ fn render_inlines(
             }
         }
 
-        // Click detection using different approach: check on DOWN event
-        let down = ui.input(|i| i.pointer.primary_down());
-        let interact_pos = ui.input(|i| i.pointer.interact_pos());
-
-        // When mouse goes DOWN on a link, we'll open it
-        if down {
-            if let Some(pos) = interact_pos {
+        // Click: open link on mouse down
+        if ui.input(|i| i.pointer.primary_down()) {
+            if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
                 if rect.contains(pos) {
-                    eprintln!("DEBUG: mouse down on link rect={:?}, pos={:?}", rect, pos);
                     let rel = pos - rect.min;
                     let char_idx = galley.cursor_from_pos(rel).ccursor.index;
 
                     for (url, range) in &links {
                         if range.contains(&char_idx) {
-                            eprintln!("DEBUG: mouse down on URL: {}", url);
-                            // Open immediately on mouse down
-                            let _ = open::that(url);
+                            if url.starts_with('#') {
+                                // Anchor link - skip for now (no-op)
+                            } else if url.starts_with("file://")
+                                || url.starts_with("http://")
+                                || url.starts_with("https://")
+                            {
+                                let _ = open::that(url);
+                            } else if !url.contains("://") && !url.contains(':') {
+                                // Relative path - try to open
+                                let _ = open::that(url);
+                            }
                         }
                     }
                 }
