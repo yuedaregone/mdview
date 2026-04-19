@@ -174,21 +174,56 @@ impl eframe::App for MdViewApp {
         // Track maximized state FIRST
         let currently_maximized = ctx.input(|i| i.viewport().maximized).unwrap_or(false);
 
-        // Save config when maximized state changes or window size changes
+        // Get viewport info for position
+        let viewport_rect = ctx.input(|i| i.viewport().outer_rect);
+
+        // Save config when maximized state changes or window size/position changes
         if currently_maximized != self.window_maximized {
             self.window_maximized = currently_maximized;
             self.config.maximized = currently_maximized;
+
+            // Save position when unmaximizing
+            if !currently_maximized {
+                if let Some(rect) = viewport_rect {
+                    self.config.window_x = Some(rect.min.x);
+                    self.config.window_y = Some(rect.min.y);
+                }
+            }
             let _ = self.config.save();
         } else if !currently_maximized {
             let size = ctx.available_rect();
-            if size.width() > 0.0
-                && size.height() > 0.0
-                && (size.width() != self.config.window_width
-                    || size.height() != self.config.window_height)
-            {
-                self.config.window_width = size.width();
-                self.config.window_height = size.height();
-                let _ = self.config.save();
+            if size.width() > 0.0 && size.height() > 0.0 {
+                let size_changed = size.width() != self.config.window_width
+                    || size.height() != self.config.window_height;
+
+                // Save if position not set yet OR position changed
+                let need_save_pos =
+                    self.config.window_x.is_none() || self.config.window_y.is_none();
+                let pos_changed = if let Some(rect) = viewport_rect {
+                    let has_changed = self
+                        .config
+                        .window_x
+                        .map_or(true, |x| (x - rect.min.x).abs() > 1.0)
+                        || self
+                            .config
+                            .window_y
+                            .map_or(true, |y| (y - rect.min.y).abs() > 1.0);
+                    has_changed
+                } else {
+                    false
+                };
+
+                if size_changed || need_save_pos || pos_changed {
+                    self.config.window_width = size.width();
+                    self.config.window_height = size.height();
+
+                    if let Some(rect) = viewport_rect {
+                        self.config.window_x = Some(rect.min.x);
+                        self.config.window_y = Some(rect.min.y);
+                    }
+
+                    let _ = self.config.save();
+                }
             }
         }
 
