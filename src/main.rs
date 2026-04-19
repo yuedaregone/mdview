@@ -8,7 +8,6 @@ mod markdown;
 mod selection;
 mod theme;
 mod viewport;
-mod widgets;
 
 /// A blazingly fast, ultra-lightweight Markdown reader
 #[derive(Parser, Debug)]
@@ -57,7 +56,8 @@ fn main() -> eframe::Result<()> {
     let mut viewport_builder = egui::ViewportBuilder::default()
         .with_inner_size([config.window_width, config.window_height])
         .with_min_inner_size([400.0, 300.0])
-        .with_title("mdview");
+        .with_title("mdview")
+        .with_decorations(false);
 
     if let (Some(x), Some(y)) = (config.window_x, config.window_y) {
         viewport_builder = viewport_builder.with_position(egui::Pos2::new(x, y));

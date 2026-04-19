@@ -20,9 +20,32 @@ pub fn render_doc(
     selector: &mut TextSelector,
     viewport: &mut ViewportState,
 ) {
-    // Bypass viewport culling for now - render all blocks
+    let block_count = doc.nodes.len();
+
+    // Update viewport state with latest dimensions
+    viewport.scroll_offset = 0.0; // Will be set by app.rs
+    viewport.viewport_height = ui.max_rect().height();
+
+    // Reinitialize if block count changed
+    if viewport.blocks.len() != block_count {
+        *viewport = ViewportState::new(block_count);
+    }
+
+    // Render all blocks - viewport culling disabled for stability
+    // The ScrollArea handles scrolling, we just render all content
     for (i, node) in doc.nodes.iter().enumerate() {
+        let before = ui.cursor().min.y;
         render_block(ui, node, theme, font_size, i, image_loader, selector);
+        let after = ui.cursor().min.y;
+
+        // Only update height if not yet measured
+        if let Some(block) = viewport.blocks.get_mut(i) {
+            if !block.measured {
+                let height = (after - before).max(20.0);
+                block.height = height;
+                block.measured = true;
+            }
+        }
         ui.add_space(4.0);
     }
     ui.add_space(32.0);

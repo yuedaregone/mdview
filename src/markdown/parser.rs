@@ -122,17 +122,6 @@ impl fmt::Display for Align {
     }
 }
 
-// ─── Parser ─────────────────────────────────────────────────────────────────
-
-/// Parse markdown text into MarkdownDoc
-pub fn parse(text: &str) -> MarkdownDoc {
-    let arena = Arena::new();
-    let options = build_options();
-    let root = parse_document(&arena, text, &options);
-    let nodes = convert_children(root);
-    MarkdownDoc { nodes }
-}
-
 fn build_options() -> Options<'static> {
     let mut opts = Options::default();
     opts.extension.table = true;
