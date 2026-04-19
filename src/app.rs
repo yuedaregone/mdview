@@ -319,10 +319,13 @@ impl eframe::App for MdViewApp {
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             ui.horizontal_top(|ui| {
-                                ui.add_space(32.0);
+                                let total_width = ui.available_width();
+                                let max_width = 800.0;
+                                let content_width = total_width.min(max_width);
+                                let margin = (total_width - content_width) / 2.0;
+                                ui.add_space(margin);
                                 ui.vertical(|ui| {
-                                    let max_width = ui.available_width().min(900.0);
-                                    ui.set_max_width(max_width);
+                                    ui.set_max_width(content_width);
                                     ui.add_space(16.0);
 
                                     crate::markdown::renderer::render_doc(
@@ -335,7 +338,7 @@ impl eframe::App for MdViewApp {
                                         &mut self.viewport,
                                     );
                                 });
-                                ui.add_space(32.0);
+                                ui.add_space(margin);
                             });
                         });
                     self.viewport.scroll_offset = scroll_output.state.offset.y;
