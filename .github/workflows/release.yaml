@@ -1,0 +1,67 @@
+name: Build and Release Windows App
+
+on:
+  push:
+    tags:
+      - 'v*'  
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY_NAME: mdview  
+
+jobs:
+  build_windows:
+    name: Build for Windows
+    runs-on: windows-latest  # 在 Windows 环境下编译
+
+    steps:
+      # 1. 检出代码
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. 设置 Rust 工具链
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      # 3. 启用缓存（加速依赖下载和编译）
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      # 4. 构建 Release 可执行文件
+      - name: Build Release
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      # 5. 准备打包文件夹，复制必要的资源文件
+      # 如果你的 egui 项目依赖资源文件（如图片、字体等），请确保一并复制
+      - name: Prepare Artifacts
+        run: |
+          mkdir artifacts
+          copy target\x86_64-pc-windows-msvc\release\${{ env.BINARY_NAME }}.exe artifacts\
+          # 如果你有 assets 文件夹，取消下面的注释，并根据实际情况调整
+          # if exist assets xcopy /E /I assets artifacts\assets\
+
+      # 6. 将 .exe 打包成 .zip 并生成 SHA256 校验文件
+      - name: Package Artifacts
+        shell: pwsh
+        run: |
+          Compress-Archive -Path artifacts\* -DestinationPath ${{ env.BINARY_NAME }}-windows-x64.zip
+          Get-FileHash ${{ env.BINARY_NAME }}-windows-x64.zip -Algorithm SHA256 | Format-List > ${{ env.BINARY_NAME }}-windows-x64.zip.sha256
+
+      # 7. 上传打包好的文件到 GitHub Release
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.BINARY_NAME }}-windows-x64.zip
+            ${{ env.BINARY_NAME }}-windows-x64.zip.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
