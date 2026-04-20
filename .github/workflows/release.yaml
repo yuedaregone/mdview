@@ -13,6 +13,8 @@ jobs:
   build_windows:
     name: Build for Windows
     runs-on: windows-latest  # 在 Windows 环境下编译
+    permissions:
+      contents: write 
 
     steps:
       # 1. 检出代码
