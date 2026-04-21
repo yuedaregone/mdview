@@ -9,21 +9,22 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
 
-use egui::{Context, TextureHandle, TextureOptions};
+use egui::{Context, TextureOptions};
 
 use base64::Engine;
+use tracing;
 
 /// Messages sent from loader threads
 enum ImageMsg {
-    Ready { key: String, texture: TextureHandle },
-    Failed { key: String },
+    Ready { key: String, image: egui::ColorImage },
+    Failed { key: String, reason: String },
 }
 
 /// State of an image in the cache
 pub enum ImageState {
     Loading,
-    Ready(TextureHandle),
-    Failed,
+    Ready(egui::TextureId), // Changed from TextureHandle
+    Failed(String), // Add reason
 }
 
 /// Async image loader with caching
@@ -71,12 +72,15 @@ impl ImageLoader {
         let mut any_ready = false;
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
-                ImageMsg::Ready { key, texture } => {
-                    self.cache.insert(key, ImageState::Ready(texture));
-                    any_ready = true;
+                ImageMsg::Ready { key, image } => {
+                    if let Some(ctx) = &self.ctx {
+                        let texture_handle = ctx.load_texture(&key, image, TextureOptions::LINEAR);
+                        self.cache.insert(key, ImageState::Ready(texture_handle.id()));
+                        any_ready = true;
+                    }
                 }
-                ImageMsg::Failed { key } => {
-                    self.cache.insert(key, ImageState::Failed);
+                ImageMsg::Failed { key, reason } => {
+                    self.cache.insert(key, ImageState::Failed(reason));
                     any_ready = true;
                 }
             }
@@ -98,19 +102,10 @@ impl ImageLoader {
         if resolved != url {
             if self.cache.contains_key(&resolved) {
                 // Already loading/loaded under resolved key — just alias the original key
-                let state = match &self.cache[&resolved] {
-                    ImageState::Ready(_) => "ready",
-                    ImageState::Failed => "failed",
-                    ImageState::Loading => "loading",
-                };
-                let alias = match state {
-                    "ready" => {
-                        // Can't clone TextureHandle easily, return Loading for original key
-                        // The resolved key will be used for actual display
-                        ImageState::Loading
-                    }
-                    "failed" => ImageState::Failed,
-                    _ => ImageState::Loading,
+                let alias = match &self.cache[&resolved] {
+                    ImageState::Ready(texture_id) => ImageState::Ready(*texture_id),
+                    ImageState::Failed(reason) => ImageState::Failed(reason.clone()),
+                    ImageState::Loading => ImageState::Loading,
                 };
                 self.cache.insert(url.to_string(), alias);
                 return self.cache.get(url).unwrap();
@@ -165,22 +160,24 @@ impl ImageLoader {
     /// Start loading an image asynchronously
     fn start_load(&self, key: String, resolved: String) {
         let tx = self.tx.clone();
-        let ctx = match &self.ctx {
+        let _ctx = match &self.ctx {
             Some(c) => c.clone(),
             None => return, // No context yet, can't load
         };
 
+        tracing::info!("Starting image load: {}", &resolved);
         std::thread::spawn(move || match load_image_data(&resolved) {
             Ok(image_data) => {
+                tracing::info!("Image loaded successfully: {}", key);
                 let color_image = egui::ColorImage::from_rgba_unmultiplied(
                     [image_data.width as usize, image_data.height as usize],
                     &image_data.rgba,
                 );
-                let texture = ctx.load_texture(&key, color_image, TextureOptions::LINEAR);
-                let _ = tx.send(ImageMsg::Ready { key, texture });
+                let _ = tx.send(ImageMsg::Ready { key, image: color_image });
             }
-            Err(_) => {
-                let _ = tx.send(ImageMsg::Failed { key });
+            Err(reason) => {
+                tracing::error!("Image load failed for {}: {}", key, reason);
+                let _ = tx.send(ImageMsg::Failed { key, reason });
             }
         });
     }

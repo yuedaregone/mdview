@@ -21,34 +21,84 @@ pub fn render_doc(
     viewport: &mut ViewportState,
 ) {
     let block_count = doc.nodes.len();
-
-    // Update viewport state with latest dimensions
-    viewport.scroll_offset = 0.0; // Will be set by app.rs
-    viewport.viewport_height = ui.max_rect().height();
-
-    // Reinitialize if block count changed
     if viewport.blocks.len() != block_count {
         *viewport = ViewportState::new(block_count);
     }
 
-    // Render all blocks - viewport culling disabled for stability
-    // The ScrollArea handles scrolling, we just render all content
-    for (i, node) in doc.nodes.iter().enumerate() {
-        let before = ui.cursor().min.y;
-        render_block(ui, node, theme, font_size, i, image_loader, selector);
-        let after = ui.cursor().min.y;
+    const ESTIMATED_HEIGHT: f32 = 20.0;
+    const BLOCK_SPACING: f32 = 4.0;
 
-        // Only update height if not yet measured
-        if let Some(block) = viewport.blocks.get_mut(i) {
-            if !block.measured {
-                let height = (after - before).max(20.0);
-                block.height = height;
-                block.measured = true;
-            }
-        }
-        ui.add_space(4.0);
-    }
-    ui.add_space(32.0);
+    let force_full_render = !viewport.initialized;
+
+    egui::ScrollArea::vertical()
+        .auto_shrink([false; 2])
+        .show_viewport(ui, |ui, vis_rect| {
+            ui.horizontal_top(|ui| {
+                let total_width = ui.available_width();
+                let max_width = 800.0;
+                let content_width = total_width.min(max_width);
+                let margin = (total_width - content_width) / 2.0;
+                ui.add_space(margin);
+
+                ui.vertical(|ui| {
+                    ui.set_max_width(content_width);
+                    ui.add_space(16.0);
+
+                    let mut current_y = 0.0f32;
+                    let content_start_y = ui.cursor().min.y;
+
+                    for (i, node) in doc.nodes.iter().enumerate() {
+                        let cached_h = viewport.blocks
+                            .get(i)
+                            .map(|b| b.height)
+                            .unwrap_or(ESTIMATED_HEIGHT);
+                        let block_top = current_y;
+                        let block_bottom = block_top + cached_h;
+
+                        let is_visible = block_bottom >= vis_rect.min.y - 100.0
+                            && block_top <= vis_rect.max.y + 100.0;
+
+                        if is_visible || force_full_render {
+                            let block_rect = Rect::from_min_size(
+                                pos2(ui.min_rect().min.x, content_start_y + block_top),
+                                vec2(content_width, cached_h.max(ESTIMATED_HEIGHT)),
+                            );
+
+                            let result = ui.allocate_new_ui(
+                                UiBuilder::new().max_rect(block_rect),
+                                |block_ui| {
+                                    render_block(
+                                        block_ui, node, theme, font_size,
+                                        i, image_loader, selector,
+                                    );
+                                },
+                            );
+
+                            let actual_h = result.response.rect.height();
+
+                            if let Some(block) = viewport.blocks.get_mut(i) {
+                                if !block.measured
+                                    || (block.height - actual_h).abs() > 1.0
+                                {
+                                    block.height = actual_h.max(ESTIMATED_HEIGHT);
+                                    block.measured = true;
+                                }
+                            }
+                        }
+
+                        current_y += cached_h + BLOCK_SPACING;
+                    }
+
+                    ui.set_min_height(current_y + 32.0);
+
+                    ui.add_space(32.0);
+                });
+
+                ui.add_space(margin);
+            });
+        });
+
+    viewport.initialized = true;
 }
 
 /// Render a block-level node
@@ -79,16 +129,16 @@ fn render_block(
             render_table(ui, headers, rows, aligns, theme, font_size, index);
         }
         DocNode::BlockQuote(children) => {
-            render_block_quote(ui, children, theme, font_size, image_loader, selector);
+            render_block_quote(ui, children, theme, font_size, image_loader, selector, index);
         }
         DocNode::OrderedList { start, items } => {
-            render_ordered_list(ui, *start, items, theme, font_size, image_loader, selector);
+            render_ordered_list(ui, *start, items, theme, font_size, image_loader, selector, index);
         }
         DocNode::UnorderedList(items) => {
-            render_unordered_list_ui(ui, items, theme, font_size, image_loader, selector);
+            render_unordered_list(ui, items, theme, font_size, image_loader, selector, index);
         }
         DocNode::TaskList { items } => {
-            render_task_list(ui, items, theme, font_size, image_loader, selector);
+            render_task_list(ui, items, theme, font_size, image_loader, selector, index);
         }
         DocNode::ThematicBreak => {
             render_thematic_break(ui, theme);
@@ -100,7 +150,7 @@ fn render_block(
             render_html_block(ui, html, theme, font_size);
         }
         DocNode::FootnoteDef { label, content } => {
-            render_footnote_def(ui, label, content, theme, font_size, image_loader, selector);
+            render_footnote_def(ui, label, content, theme, font_size, image_loader, selector, index);
         }
     }
 }
@@ -126,13 +176,13 @@ fn render_heading(
         size,
         theme.heading,
         selector,
-        block_index,
+        ui.id().with("heading").with(block_index),
     );
     let after = ui.cursor().min;
     // Record text segment for selection
     let plain = children.iter().map(|n| n.plain_text()).collect::<String>();
     let rect = egui::Rect::from_min_max(before, egui::pos2(ui.max_rect().right(), after.y));
-    selector.add_segment(rect, plain, 0);
+    selector.add_segment(rect, plain, ui.id().with("heading_segment").with(block_index));
     ui.add_space(4.0);
 }
 
@@ -154,12 +204,12 @@ fn render_paragraph(
         font_size,
         theme.foreground,
         selector,
-        block_index,
+        ui.id().with("paragraph").with(block_index),
     );
     let after = ui.cursor().min;
     let plain = inlines.iter().map(|n| n.plain_text()).collect::<String>();
     let rect = egui::Rect::from_min_max(before, egui::pos2(ui.max_rect().right(), after.y));
-    selector.add_segment(rect, plain, 0);
+    selector.add_segment(rect, plain, ui.id().with("paragraph_segment").with(block_index));
     ui.add_space(8.0);
 }
 
@@ -204,7 +254,7 @@ fn render_code_block(
                 if let Some(job) = crate::markdown::highlight::highlight_code(
                     code,
                     lang,
-                    theme.syntax_theme,
+                    &theme.syntax_theme,
                     code_size,
                 ) {
                     ui.label(job);
@@ -243,7 +293,7 @@ fn render_table(
             .show(ui, |ui| {
                 let _num_cols = aligns.len().max(headers.len());
 
-                Grid::new(format!("md_table_{}", block_index))
+                Grid::new(ui.id().with("md_table").with(block_index))
                     .striped(theme.table_stripe_bg.is_some())
                     .min_col_width(60.0)
                     .spacing([8.0, 4.0])
@@ -251,15 +301,17 @@ fn render_table(
                         // Header row
                         for (i, cell) in headers.iter().enumerate() {
                             let align = aligns.get(i).copied().unwrap_or(Align::None);
-                            render_table_cell(ui, cell, align, theme, font_size, true);
+                            let cell_id = ui.id().with("table_cell_h").with(block_index).with(i);
+                            render_table_cell(ui, cell, align, theme, font_size, true, cell_id);
                         }
                         ui.end_row();
 
                         // Data rows
-                        for row in rows.iter() {
-                            for (i, cell) in row.iter().enumerate() {
-                                let align = aligns.get(i).copied().unwrap_or(Align::None);
-                                render_table_cell(ui, cell, align, theme, font_size, false);
+                        for (row_idx, row) in rows.iter().enumerate() {
+                            for (col_idx, cell) in row.iter().enumerate() {
+                                let align = aligns.get(col_idx).copied().unwrap_or(Align::None);
+                                let cell_id = ui.id().with("table_cell_d").with(block_index).with(row_idx).with(col_idx);
+                                render_table_cell(ui, cell, align, theme, font_size, false, cell_id);
                             }
                             ui.end_row();
                         }
@@ -268,7 +320,7 @@ fn render_table(
     });
 }
 
-static TABLE_CELL_INDEX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 
 fn render_table_cell(
     ui: &mut Ui,
@@ -277,8 +329,8 @@ fn render_table_cell(
     theme: &Theme,
     font_size: f32,
     is_header: bool,
+    cell_id: egui::Id,
 ) {
-    let cell_index = TABLE_CELL_INDEX.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let layout = match align {
         Align::Center => Layout::centered_and_justified(egui::Direction::TopDown),
         Align::Right => Layout::right_to_left(egui::Align::Center),
@@ -301,14 +353,13 @@ fn render_table_cell(
                     font_size,
                     theme.foreground,
                     &mut TextSelector::new(),
-                    cell_index,
+                    cell_id, // Pass cell_id now
                 );
             });
     });
 }
 
 // ─── Block Quote ────────────────────────────────────────────────────────────
-
 fn render_block_quote(
     ui: &mut Ui,
     children: &[DocNode],
@@ -316,6 +367,7 @@ fn render_block_quote(
     font_size: f32,
     image_loader: &mut ImageLoader,
     selector: &mut TextSelector,
+    index: usize, // Add index parameter
 ) {
     Frame::NONE
         .fill(Color32::TRANSPARENT)
@@ -327,13 +379,13 @@ fn render_block_quote(
                 ui.horizontal(|ui| {
                     ui.add_space(16.0); // Space for left border + padding
                     ui.vertical(|ui| {
-                        for child in children {
+                        for (_i, child) in children.iter().enumerate() {
                             render_block(
                                 ui,
                                 child,
                                 theme,
                                 font_size * 0.95,
-                                0,
+                                index,
                                 image_loader,
                                 selector,
                             );
@@ -360,7 +412,7 @@ fn render_block_quote(
 
 // ─── Lists ──────────────────────────────────────────────────────────────────
 
-static LIST_ITEM_INDEX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 
 fn render_ordered_list(
     ui: &mut Ui,
@@ -370,9 +422,9 @@ fn render_ordered_list(
     font_size: f32,
     image_loader: &mut ImageLoader,
     selector: &mut TextSelector,
+    block_index: usize, // block_index of the list itself
 ) {
     for (i, item) in items.iter().enumerate() {
-        let mut idx = LIST_ITEM_INDEX.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let num = start + i as u64;
         ui.horizontal(|ui| {
             ui.add_space(16.0);
@@ -383,33 +435,47 @@ fn render_ordered_list(
             );
             ui.add_space(4.0);
             ui.vertical(|ui| {
-                for child in &item.children {
-                    render_block(ui, child, theme, font_size, idx, image_loader, selector);
-                    idx += 1;
+                for (_i, child) in item.children.iter().enumerate() {
+                    render_block(
+                        ui,
+                        child,
+                        theme,
+                        font_size,
+                        block_index,
+                        image_loader,
+                        selector,
+                    );
                 }
             });
         });
     }
 }
 
-fn render_unordered_list_ui(
+fn render_unordered_list(
     ui: &mut Ui,
     items: &[ListItem],
     theme: &Theme,
     font_size: f32,
     image_loader: &mut ImageLoader,
     selector: &mut TextSelector,
+    block_index: usize, // Add block_index parameter
 ) {
-    for item in items {
-        let mut idx = LIST_ITEM_INDEX.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    for (_i, item) in items.iter().enumerate() {
         ui.horizontal(|ui| {
             ui.add_space(16.0);
             ui.label(RichText::new("•").size(font_size).color(theme.list_marker));
             ui.add_space(4.0);
             ui.vertical(|ui| {
-                for child in &item.children {
-                    render_block(ui, child, theme, font_size, idx, image_loader, selector);
-                    idx += 1;
+                for (_j, child) in item.children.iter().enumerate() {
+                    render_block(
+                        ui,
+                        child,
+                        theme,
+                        font_size,
+                        block_index,
+                        image_loader,
+                        selector,
+                    );
                 }
             });
         });
@@ -423,6 +489,7 @@ fn render_task_list(
     font_size: f32,
     image_loader: &mut ImageLoader,
     selector: &mut TextSelector,
+    index: usize, // Add index parameter
 ) {
     for item in items {
         ui.horizontal(|ui| {
@@ -469,7 +536,7 @@ fn render_task_list(
             ui.add_space(8.0);
             ui.vertical(|ui| {
                 for child in &item.children {
-                    render_block(ui, child, theme, font_size, 0, image_loader, selector);
+                    render_block(ui, child, theme, font_size, index, image_loader, selector);
                 }
             });
         });
@@ -502,19 +569,16 @@ fn render_image(
     let max_width = ui.available_width().min(800.0);
 
     match image_loader.get(url) {
-        ImageState::Ready(texture) => {
-            let size = texture.size_vec2();
+        ImageState::Ready(texture_id) => {
+            let size = ui.ctx().tex_manager().read().meta(*texture_id).unwrap().size;
+let size = egui::vec2(size[0] as f32, size[1] as f32);
             let scale = if size.x > max_width {
                 max_width / size.x
             } else {
                 1.0
             };
             let display_size = size * scale;
-            ui.add(
-                egui::Image::from_texture(&*texture)
-                    .max_width(display_size.x)
-                    .fit_to_original_size(scale),
-            );
+            ui.add(egui::Image::new((*texture_id, display_size)));
         }
         ImageState::Loading => {
             // Show loading placeholder
@@ -530,18 +594,17 @@ fn render_image(
                 );
             });
         }
-        ImageState::Failed => {
-            // Show error placeholder
+        ImageState::Failed(reason) => {
+            // Show error placeholder with tooltip
             let frame = Frame::NONE
                 .fill(theme.code_bg)
                 .corner_radius(4.0)
                 .inner_margin(Margin::same(12));
             frame.show(ui, |ui| {
-                ui.label(
-                    RichText::new(format!("❌ {}", if alt.is_empty() { url } else { alt }))
-                        .size(13.0)
-                        .color(theme.muted_text()),
-                );
+                let text = RichText::new(format!("❌ {}", if alt.is_empty() { url } else { alt }))
+                    .size(13.0)
+                    .color(theme.muted_text());
+                ui.label(text).on_hover_text(reason);
             });
         }
     }
@@ -576,6 +639,7 @@ fn render_footnote_def(
     font_size: f32,
     image_loader: &mut ImageLoader,
     selector: &mut TextSelector,
+    index: usize, // Add index parameter
 ) {
     ui.horizontal(|ui| {
         ui.label(
@@ -585,11 +649,18 @@ fn render_footnote_def(
         );
         ui.add_space(4.0);
         ui.vertical(|ui| {
-            for child in content {
-                render_block(ui, child, theme, font_size, 0, image_loader, selector);
+            for (_i, child) in content.iter().enumerate() {
+                render_block(
+                    ui,
+                    child,
+                    theme,
+                    font_size,
+                    index,
+                    image_loader,
+                    selector,
+                );
             }
-        });
-    });
+        });    });
 }
 
 // ─── Inline Rendering ───────────────────────────────────────────────────────
@@ -603,7 +674,7 @@ fn render_inlines(
     font_size: f32,
     default_color: Color32,
     selector: &mut TextSelector,
-    _block_index: usize,
+    id: egui::Id, // Changed from _block_index: usize
 ) {
     let max_width = ui.available_width();
     let (job, links) = inlines_to_rich_text(inlines, theme, font_size, default_color, max_width);
@@ -664,7 +735,7 @@ fn render_inlines(
         }
     }
 
-    selector.add_segment(rect, plain_text, 0);
+    selector.add_segment(rect, plain_text, id);
 }
 
 /// Convert inline nodes to a LayoutJob with proper inline formatting.
@@ -766,12 +837,12 @@ fn append_inlines_to_job(
                 );
             }
             InlineNode::Link { url, children, .. } => {
-                let link_start = job.text.chars().count();
+                let link_start = job.text.len(); // 字节索引
                 let link_style = style;
                 append_inlines_to_job(
                     children, theme, font_size, theme.link, job, link_style, links, true,
                 );
-                let link_end = job.text.chars().count();
+                let link_end = job.text.len(); // 字节索引
                 if !url.is_empty() {
                     links.push((url.clone(), link_start..link_end));
                 }
@@ -790,7 +861,8 @@ fn append_inlines_to_job(
                 push_section(job, " ", font_size, color, style, is_in_link);
             }
             InlineNode::HardBreak => {
-                push_section(job, "\n", font_size, color, style, is_in_link);
+                push_section(job, "
+", font_size, color, style, is_in_link);
             }
             InlineNode::FootnoteRef(label) => {
                 push_section(

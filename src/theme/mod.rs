@@ -4,11 +4,13 @@ use egui::Color32;
 
 pub use presets::PRESETS;
 
+use serde::{Deserialize, Serialize};
+
 /// Theme definition for the markdown reader
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[allow(dead_code)]
 pub struct Theme {
-    pub name: &'static str,
+    pub name: String,
     pub is_dark: bool,
     // Base
     pub background: Color32,
@@ -30,18 +32,51 @@ pub struct Theme {
     pub task_unchecked: Color32,
     pub selection_bg: Color32,
     // Code syntax (syntect theme name)
-    pub syntax_theme: &'static str,
+    pub syntax_theme: String,
+}
+
+use std::fs;
+use std::path::{PathBuf};
+
+impl Default for Theme {
+    fn default() -> Self {
+        PRESETS[0].clone()
+    }
 }
 
 impl Theme {
     /// Get the default theme
-    pub fn default_theme() -> &'static Theme {
-        &PRESETS[0]
+    pub fn default_theme() -> Theme {
+        PRESETS[0].clone()
     }
 
     /// Get all preset themes
-    pub fn all_themes() -> &'static [Theme] {
-        &*PRESETS
+    pub fn all_themes() -> Vec<Theme> {
+        PRESETS.to_vec()
+    }
+
+    /// Load themes from user config dir
+    pub fn from_config() -> Vec<Theme> {
+        let mut themes = Self::all_themes();
+        if let Some(path) = Self::user_themes_path() {
+            if let Ok(content) = fs::read_to_string(path) {
+                if let Ok(customs) = toml::from_str::<Vec<Theme>>(&content) {
+                    themes.extend(customs);
+                }
+            }
+        }
+        themes
+    }
+
+    /// Path to user's custom themes.toml file
+    fn user_themes_path() -> Option<PathBuf> {
+        if let Some(mut dir) = dirs::config_dir() {
+            dir.push("mdview");
+            dir.push("themes.toml");
+            Some(dir)
+        } else {
+            None
+        }
     }
 
     /// Muted text color (for placeholder text)

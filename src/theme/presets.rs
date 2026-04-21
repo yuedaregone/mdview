@@ -4,11 +4,11 @@ use egui::Color32;
 
 use super::Theme;
 
-pub static PRESETS: LazyLock<[Theme; 8]> = LazyLock::new(|| {
-    [
+pub static PRESETS: LazyLock<Vec<Theme>> = LazyLock::new(|| {
+    vec![
         // ─── GitHub Light ──────────────────────────────────────────────────
         Theme {
-            name: "GitHub Light",
+            name: "GitHub Light".to_string(),
             is_dark: false,
             background: Color32::from_rgb(255, 255, 255),
             foreground: Color32::from_rgb(36, 41, 47),
@@ -27,11 +27,11 @@ pub static PRESETS: LazyLock<[Theme; 8]> = LazyLock::new(|| {
             task_checked: Color32::from_rgb(31, 111, 235),
             task_unchecked: Color32::from_rgb(215, 228, 240),
             selection_bg: Color32::from_rgba_unmultiplied(31, 111, 235, 80),
-            syntax_theme: "InspiredGitHub",
+            syntax_theme: "InspiredGitHub".to_string(),
         },
         // ─── GitHub Dark ───────────────────────────────────────────────────
         Theme {
-            name: "GitHub Dark",
+            name: "GitHub Dark".to_string(),
             is_dark: true,
             background: Color32::from_rgb(13, 17, 23),
             foreground: Color32::from_rgb(201, 209, 217),
@@ -50,11 +50,11 @@ pub static PRESETS: LazyLock<[Theme; 8]> = LazyLock::new(|| {
             task_checked: Color32::from_rgb(86, 159, 255),
             task_unchecked: Color32::from_rgb(48, 54, 61),
             selection_bg: Color32::from_rgba_unmultiplied(86, 159, 255, 80),
-            syntax_theme: "base16-ocean.dark",
+            syntax_theme: "base16-ocean.dark".to_string(),
         },
         // ─── One Dark ──────────────────────────────────────────────────────
         Theme {
-            name: "One Dark",
+            name: "One Dark".to_string(),
             is_dark: true,
             background: Color32::from_rgb(40, 44, 52),
             foreground: Color32::from_rgb(171, 178, 191),
@@ -73,11 +73,11 @@ pub static PRESETS: LazyLock<[Theme; 8]> = LazyLock::new(|| {
             task_checked: Color32::from_rgb(152, 195, 121),
             task_unchecked: Color32::from_rgb(86, 92, 103),
             selection_bg: Color32::from_rgba_unmultiplied(97, 175, 239, 80),
-            syntax_theme: "base16-ocean.dark",
+            syntax_theme: "base16-ocean.dark".to_string(),
         },
         // ─── Solarized Light ───────────────────────────────────────────────
         Theme {
-            name: "Solarized Light",
+            name: "Solarized Light".to_string(),
             is_dark: false,
             background: Color32::from_rgb(253, 246, 227),
             foreground: Color32::from_rgb(88, 110, 117),
@@ -96,11 +96,11 @@ pub static PRESETS: LazyLock<[Theme; 8]> = LazyLock::new(|| {
             task_checked: Color32::from_rgb(133, 153, 0),
             task_unchecked: Color32::from_rgb(211, 204, 188),
             selection_bg: Color32::from_rgba_unmultiplied(38, 139, 210, 80),
-            syntax_theme: "Solarized (light)",
+            syntax_theme: "Solarized (light)".to_string(),
         },
         // ─── Solarized Dark ────────────────────────────────────────────────
         Theme {
-            name: "Solarized Dark",
+            name: "Solarized Dark".to_string(),
             is_dark: true,
             background: Color32::from_rgb(7, 54, 66),
             foreground: Color32::from_rgb(131, 148, 150),
@@ -119,11 +119,11 @@ pub static PRESETS: LazyLock<[Theme; 8]> = LazyLock::new(|| {
             task_checked: Color32::from_rgb(133, 153, 0),
             task_unchecked: Color32::from_rgb(40, 70, 80),
             selection_bg: Color32::from_rgba_unmultiplied(38, 139, 210, 80),
-            syntax_theme: "Solarized (dark)",
+            syntax_theme: "Solarized (dark)".to_string(),
         },
         // ─── Dracula ───────────────────────────────────────────────────────
         Theme {
-            name: "Dracula",
+            name: "Dracula".to_string(),
             is_dark: true,
             background: Color32::from_rgb(40, 42, 54),
             foreground: Color32::from_rgb(248, 248, 242),
@@ -142,11 +142,11 @@ pub static PRESETS: LazyLock<[Theme; 8]> = LazyLock::new(|| {
             task_checked: Color32::from_rgb(80, 250, 123),
             task_unchecked: Color32::from_rgb(68, 71, 90),
             selection_bg: Color32::from_rgba_unmultiplied(189, 147, 249, 80),
-            syntax_theme: "base16-ocean.dark",
+            syntax_theme: "base16-ocean.dark".to_string(),
         },
         // ─── Nord ──────────────────────────────────────────────────────────
         Theme {
-            name: "Nord",
+            name: "Nord".to_string(),
             is_dark: true,
             background: Color32::from_rgb(46, 52, 64),
             foreground: Color32::from_rgb(216, 222, 233),
@@ -165,11 +165,11 @@ pub static PRESETS: LazyLock<[Theme; 8]> = LazyLock::new(|| {
             task_checked: Color32::from_rgb(163, 190, 140),
             task_unchecked: Color32::from_rgb(67, 76, 94),
             selection_bg: Color32::from_rgba_unmultiplied(136, 192, 208, 80),
-            syntax_theme: "base16-ocean.dark",
+            syntax_theme: "base16-ocean.dark".to_string(),
         },
         // ─── Catppuccin Latte ──────────────────────────────────────────────
         Theme {
-            name: "Catppuccin Latte",
+            name: "Catppuccin Latte".to_string(),
             is_dark: false,
             background: Color32::from_rgb(239, 241, 245),
             foreground: Color32::from_rgb(76, 79, 105),
@@ -188,7 +188,7 @@ pub static PRESETS: LazyLock<[Theme; 8]> = LazyLock::new(|| {
             task_checked: Color32::from_rgb(64, 160, 43),
             task_unchecked: Color32::from_rgb(204, 208, 218),
             selection_bg: Color32::from_rgba_unmultiplied(30, 102, 245, 80),
-            syntax_theme: "InspiredGitHub",
+            syntax_theme: "InspiredGitHub".to_string(),
         },
     ]
 });

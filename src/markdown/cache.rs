@@ -21,8 +21,10 @@ fn content_hash(s: &str) -> u64 {
 
 // ─── AST Cache ──────────────────────────────────────────────────────────────
 
+use std::sync::Arc;
+
 struct AstCacheEntry {
-    doc: MarkdownDoc,
+    doc: Arc<MarkdownDoc>,  // 使用 Arc 共享所有权
     hash: u64,
 }
 
@@ -41,22 +43,18 @@ impl AstCache {
     }
 
     /// Get a cached AST, or parse and cache it
-    pub fn get_or_parse(&mut self, path: &PathBuf, content: &str) -> MarkdownDoc {
+    pub fn get_or_parse(&mut self, path: &PathBuf, content: &str) -> Arc<MarkdownDoc> {
         let hash = content_hash(content);
 
-        // Check cache hit
         if let Some(entry) = self.entries.get(path) {
             if entry.hash == hash {
-                return entry.doc.clone();
+                return Arc::clone(&entry.doc);  // 只增加引用计数，不拷贝数据
             }
         }
 
-        // Cache miss — parse and store
-        let doc = crate::markdown::parser::parse_full(content);
+        let doc = Arc::new(crate::markdown::parser::parse_full(content));
 
-        // Evict oldest entries if at capacity
         if self.entries.len() >= self.max_entries {
-            // Simple eviction: remove a random entry (HashMap doesn't maintain order)
             if let Some(key) = self.entries.keys().next().cloned() {
                 self.entries.remove(&key);
             }
@@ -65,7 +63,7 @@ impl AstCache {
         self.entries.insert(
             path.clone(),
             AstCacheEntry {
-                doc: doc.clone(),
+                doc: Arc::clone(&doc),
                 hash,
             },
         );

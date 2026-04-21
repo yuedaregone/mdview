@@ -23,6 +23,9 @@ dirs = "5"
 tracing = "0.1"
 rfd = "0.15"
 font-kit = "0.14"
+notify = "6"
+notify-debouncer-full = "0.3"
+toml = "0.8"
 
 [profile.release]
 lto = "fat"

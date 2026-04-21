@@ -5,6 +5,7 @@ use font_kit::family_name::FamilyName;
 use font_kit::properties::Properties;
 use font_kit::source::SystemSource;
 
+use std::sync::Arc;
 use crate::config::AppConfig;
 use crate::image_loader::ImageLoader;
 use crate::markdown::cache::AstCache;
@@ -12,6 +13,8 @@ use crate::markdown::parser::MarkdownDoc;
 use crate::selection::TextSelector;
 use crate::theme::Theme;
 use crate::viewport::ViewportState;
+use notify_debouncer_full::{Debouncer, new_debouncer, DebouncedEvent, FileIdMap};
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
 fn load_system_font(name: Option<&str>) -> Option<(String, Vec<u8>)> {
     let source = SystemSource::new();
@@ -68,9 +71,9 @@ pub struct MdViewApp {
     /// Current file path
     file_path: Option<PathBuf>,
     /// Parsed markdown document
-    doc: Option<MarkdownDoc>,
+    doc: Option<Arc<MarkdownDoc>>,
     /// Current theme
-    theme: &'static Theme,
+    theme: Theme,
     /// Base font size
     font_size: f32,
     /// Whether the window has been shown for the first time
@@ -89,12 +92,15 @@ pub struct MdViewApp {
     config: AppConfig,
     /// Whether window is maximized
     window_maximized: bool,
-    /// Last file modification time
-    last_mtime: Option<std::time::SystemTime>,
-    /// Last file check time
-    last_check_time: f64,
-}
-
+    /// File system event debouncer
+    file_watcher: Debouncer<RecommendedWatcher, FileIdMap>,
+    /// Receiver for file system events
+    file_events_rx: std::sync::mpsc::Receiver<Result<Vec<DebouncedEvent>, Vec<notify::Error>>>,
+    /// Flag to indicate if config needs saving
+    config_needs_save: bool,
+    /// Last time config was saved
+    last_save_time: f64,
+    }
 impl MdViewApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
@@ -109,7 +115,7 @@ impl MdViewApp {
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
-        let mut image_loader = ImageLoader::new(base_dir);
+        let mut image_loader = ImageLoader::new(base_dir.clone());
         image_loader.set_context(cc.egui_ctx.clone());
 
         setup_fonts(&cc.egui_ctx, config.font_name.as_deref());
@@ -117,14 +123,38 @@ impl MdViewApp {
         let font_size = config.font_size;
 
         // Find the theme from presets (returns static reference)
+        let themes = Theme::from_config();
         let theme = if let Some(ref theme_name) = config.theme_name {
-            Theme::all_themes()
+            themes
                 .iter()
-                .find(|t| t.name == theme_name)
+                .find(|t| t.name == *theme_name)
+                .cloned()
                 .unwrap_or_else(Theme::default_theme)
         } else {
             Theme::default_theme()
         };
+
+        // Setup file watcher
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut debouncer = new_debouncer(
+            std::time::Duration::from_millis(200), // debounce changes
+            None,
+            tx,
+        ).unwrap();
+
+        // Watch the base directory recursively if file_path is set, otherwise watch current dir
+        if let Some(ref path) = file_path {
+            if let Some(dir) = path.parent() {
+                debouncer.watcher().watch(dir, RecursiveMode::Recursive).unwrap();
+            } else {
+                debouncer.watcher().watch(&base_dir, RecursiveMode::Recursive).unwrap();
+            }
+        } else {
+            debouncer.watcher().watch(&base_dir, RecursiveMode::Recursive).unwrap();
+        }
+
+
+        let doc = doc.map(Arc::new);
 
         Self {
             file_path,
@@ -138,28 +168,34 @@ impl MdViewApp {
             ast_cache: AstCache::default(),
             error_msg: None,
             config,
-            last_mtime: None,
-            last_check_time: 0.0,
             window_maximized: false,
+            file_watcher: debouncer,
+            file_events_rx: rx,
+            config_needs_save: false,
+            last_save_time: 0.0,
         }
     }
 
     /// Load a new file (using AST cache)
     pub fn load_file(&mut self, path: PathBuf) {
+        // Stop watching previous file's directory if any
+        if let Some(old_path) = self.file_path.as_ref() {
+            if let Some(old_dir) = old_path.parent() {
+                let _ = self.file_watcher.watcher().unwatch(old_dir);
+            }
+        }
+
         if let Ok(content) = std::fs::read_to_string(&path) {
             self.error_msg = None;
             self.doc = Some(self.ast_cache.get_or_parse(&path, &content));
             if let Some(dir) = path.parent() {
                 self.image_loader.set_base_dir(dir.to_path_buf());
+                // Start watching new file's directory
+                let _ = self.file_watcher.watcher().watch(dir, RecursiveMode::Recursive);
             }
             self.file_path = Some(path.clone());
             self.config.last_file = Some(path.to_string_lossy().to_string());
-            let _ = self.config.save();
-            // Get file mtime for change detection
-            if let Ok(metadata) = std::fs::metadata(&path) {
-                self.last_mtime = metadata.modified().ok();
-            }
-            self.last_check_time = 0.0;
+            self.save_config(); // Debounced save
         } else {
             self.error_msg = Some(format!("无法打开文件"));
         }
@@ -169,7 +205,7 @@ impl MdViewApp {
     pub fn save_config(&mut self) {
         self.config.theme_name = Some(self.theme.name.to_string());
         self.config.font_size = self.font_size;
-        let _ = self.config.save();
+        self.config_needs_save = true;
     }
 
     /// Apply theme to egui visuals
@@ -211,7 +247,7 @@ impl eframe::App for MdViewApp {
                     self.config.window_y = Some(rect.min.y);
                 }
             }
-            let _ = self.config.save();
+            self.save_config(); // Use debounced save
         } else if !currently_maximized {
             let size = ctx.available_rect();
             if size.width() > 0.0 && size.height() > 0.0 {
@@ -244,7 +280,7 @@ impl eframe::App for MdViewApp {
                         self.config.window_y = Some(rect.min.y);
                     }
 
-                    let _ = self.config.save();
+                    self.save_config();
                 }
             }
         }
@@ -254,6 +290,14 @@ impl eframe::App for MdViewApp {
             ctx.request_repaint();
         }
         self.selector.clear_segments();
+
+        // Debounce config saving
+        let current_time = ctx.input(|i| i.time);
+        if self.config_needs_save && current_time - self.last_save_time > 0.5 {
+            let _ = self.config.save();
+            self.config_needs_save = false;
+            self.last_save_time = current_time;
+        }
 
         if !self.first_frame_shown {
             self.first_frame_shown = true;
@@ -292,27 +336,36 @@ impl eframe::App for MdViewApp {
                 }
                 // Ctrl+T - Cycle theme
                 if input.key_pressed(egui::Key::T) {
-                    let themes = crate::theme::Theme::all_themes();
-                    let current_idx = themes.iter().position(|t| std::ptr::eq(t, self.theme));
+                    let themes = Theme::from_config();
+                    let current_idx = themes.iter().position(|t| t.name == self.theme.name);
                     if let Some(idx) = current_idx {
                         let next_idx = (idx + 1) % themes.len();
-                        self.theme = &themes[next_idx];
+                        self.theme = themes[next_idx].clone();
                         self.save_config();
                     }
                 }
             }
         });
 
-        // File modification check (every 500ms)
-        let time = ctx.input(|i| i.time);
-        if time - self.last_check_time > 0.5 {
-            self.last_check_time = time;
-            if let Some(ref path) = self.file_path {
-                if let Ok(metadata) = std::fs::metadata(path) {
-                    if let Ok(mtime) = metadata.modified() {
-                        if self.last_mtime.map_or(true, |lm| lm != mtime) {
-                            self.load_file(path.clone());
+        // Handle file watcher events
+        while let Ok(result) = self.file_events_rx.try_recv() {
+            match result {
+                Ok(events) => {
+                    for event in events {
+                        if event.kind.is_modify() {
+                            // Check if any of the modified paths is our current file
+                            if let Some(current_file) = &self.file_path {
+                                if event.paths.contains(current_file) {
+                                    self.load_file(current_file.clone());
+                                    ctx.request_repaint();
+                                }
+                            }
                         }
+                    }
+                }
+                Err(errors) => {
+                    for error in errors {
+                        tracing::error!("File watcher error: {}", error);
                     }
                 }
             }
@@ -336,95 +389,15 @@ impl eframe::App for MdViewApp {
             .frame(Frame::NONE.fill(self.theme.background))
             .show(ctx, |ui| {
                 if let Some(doc) = &self.doc {
-                    let scroll_output = ScrollArea::vertical()
-                        .id_salt(("mdview_scroll", self.file_path.clone()))
-                        .auto_shrink([false, false])
-                        .drag_to_scroll(false)
-                        .show(ui, |ui| {
-                            ui.horizontal_top(|ui| {
-                                let total_width = ui.available_width();
-                                let max_width = 800.0;
-                                let content_width = total_width.min(max_width);
-                                let margin = (total_width - content_width) / 2.0;
-                                ui.add_space(margin);
-                                ui.vertical(|ui| {
-                                    ui.set_max_width(content_width);
-                                    ui.add_space(16.0);
-
-                                    crate::markdown::renderer::render_doc(
-                                        ui,
-                                        doc,
-                                        self.theme,
-                                        self.font_size,
-                                        &mut self.image_loader,
-                                        &mut self.selector,
-                                        &mut self.viewport,
-                                    );
-                                });
-                                ui.add_space(margin);
-                            });
-                        });
-                    self.viewport.scroll_offset = scroll_output.state.offset.y;
-                    self.viewport.viewport_height = scroll_output.inner_rect.height();
-
-                    // Use click for right-click detection (doesn't block scrollbar much)
-                    let area_response = ui.interact(
-                        ui.max_rect(),
-                        egui::Id::new("mdview_content"),
-                        Sense::click(),
+                    crate::markdown::renderer::render_doc(
+                        ui,
+                        doc,
+                        &self.theme,
+                        self.font_size,
+                        &mut self.image_loader,
+                        &mut self.selector,
+                        &mut self.viewport,
                     );
-
-                    // Handle text selection via raw input events (for copy)
-                    self.selector
-                        .handle_input_raw(ctx, self.viewport.scroll_offset);
-                    // Don't draw - use egui's built-in selection highlight
-
-                    // Right-click context menu - check for right-click without dragging
-                    area_response.context_menu(|ui| {
-                        if ui
-                            .add_enabled(
-                                self.selector.has_selection(),
-                                egui::Button::new("复制文本"),
-                            )
-                            .clicked()
-                        {
-                            self.selector.copy_to_clipboard();
-                            ui.close_menu();
-                        }
-                        ui.separator();
-                        ui.menu_button("字体大小", |ui| {
-                            for size in [12.0, 14.0, 16.0, 18.0, 20.0] {
-                                let label = format!("{}px", size as i32);
-                                if self.font_size == size {
-                                    ui.label(RichText::new(format!("▪ {}", label)).strong());
-                                } else if ui.button(&label).clicked() {
-                                    self.font_size = size;
-                                    self.save_config();
-                                    ui.close_menu();
-                                }
-                            }
-                        });
-                        ui.menu_button("切换主题", |ui| {
-                            for theme in crate::theme::Theme::all_themes() {
-                                if std::ptr::eq(theme, self.theme) {
-                                    ui.label(RichText::new(format!("▪ {}", theme.name)).strong());
-                                } else if ui.button(theme.name).clicked() {
-                                    self.theme = theme;
-                                    self.save_config();
-                                    ui.close_menu();
-                                }
-                            }
-                        });
-                        ui.separator();
-                        if ui.button("打开文件目录").clicked() {
-                            if let Some(path) = &self.file_path {
-                                if let Some(dir) = path.parent() {
-                                    let _ = open::that(dir);
-                                }
-                            }
-                            ui.close_menu();
-                        }
-                    });
                 } else if let Some(err) = self.error_msg.clone() {
                     ui.vertical_centered(|ui| {
                         ui.add_space(ui.available_height() / 3.0);

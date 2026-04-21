@@ -14,8 +14,8 @@ pub struct TextSegment {
     pub rect: Rect,
     /// Plain text content
     pub text: String,
-    /// Index of the block this segment belongs to
-    pub block_index: usize,
+    /// ID of the block this segment belongs to
+    pub block_id: egui::Id,
 }
 
 /// Text selection state
@@ -50,12 +50,12 @@ impl TextSelector {
     }
 
     /// Register a text segment during rendering
-    pub fn add_segment(&mut self, rect: Rect, text: String, block_index: usize) {
+    pub fn add_segment(&mut self, rect: Rect, text: String, block_id: egui::Id) {
         if !text.is_empty() && rect.width() > 0.0 {
             self.segments.push(TextSegment {
                 rect,
                 text,
-                block_index,
+                block_id,
             });
         }
     }
@@ -68,8 +68,8 @@ impl TextSelector {
 
             if pointer.primary_down() {
                 if let Some(pos) = pointer.interact_pos() {
-                    // Convert screen coordinate to document coordinate (subtract scroll offset)
-                    let doc_pos = pos2(pos.x, pos.y - scroll_offset);
+                    // 关键修复：加上 scroll_offset 转换为文档坐标
+                    let doc_pos = pos2(pos.x, pos.y + scroll_offset);
                     if !self.selecting {
                         self.selecting = true;
                         self.start = Some(doc_pos);
@@ -101,35 +101,34 @@ impl TextSelector {
         };
 
         let mut selected = String::new();
+        let mut last_block_id: Option<egui::Id> = None;
+
         for seg in &self.segments {
-            // Check if this segment overlaps with the selection rectangle
+            // 垂直方向快速剔除
             if seg.rect.top() > end.y || seg.rect.bottom() < start.y {
                 continue;
             }
 
-            // For segments in the same row, check horizontal overlap
             let in_start_row = seg.rect.top() <= start.y && seg.rect.bottom() >= start.y;
             let in_end_row = seg.rect.top() <= end.y && seg.rect.bottom() >= end.y;
 
             let overlaps = if in_start_row && in_end_row {
-                // Same row — check horizontal range
                 seg.rect.right() >= start.x && seg.rect.left() <= end.x
             } else if in_start_row {
-                // Start row — must be to the right of start
                 seg.rect.right() >= start.x
             } else if in_end_row {
-                // End row — must be to the left of end
                 seg.rect.left() <= end.x
             } else {
-                // Middle row — fully selected
                 true
             };
 
             if overlaps {
-                if !selected.is_empty() {
+                // 只在不同 block 之间添加空格，同一 block 内保持原文
+                if !selected.is_empty() && Some(seg.block_id) != last_block_id {
                     selected.push(' ');
                 }
                 selected.push_str(&seg.text);
+                last_block_id = Some(seg.block_id);
             }
         }
 

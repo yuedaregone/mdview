@@ -13,8 +13,7 @@ pub struct BlockLayout {
 #[derive(Debug, Clone)]
 pub struct ViewportState {
     pub blocks: Vec<BlockLayout>,
-    pub scroll_offset: f32,
-    pub viewport_height: f32,
+    pub initialized: bool,
 }
 
 impl ViewportState {
@@ -26,8 +25,7 @@ impl ViewportState {
                     measured: false,
                 })
                 .collect(),
-            scroll_offset: 0.0,
-            viewport_height: 700.0,
+            initialized: false,
         }
     }
 }
