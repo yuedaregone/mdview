@@ -2,7 +2,7 @@
 //!
 //! Tracks scroll position and viewport dimensions.
 
-const ESTIMATED_LINE_HEIGHT: f32 = 20.0;
+const ESTIMATED_LINE_HEIGHT: f32 = 60.0;
 
 #[derive(Debug, Clone)]
 pub struct BlockLayout {

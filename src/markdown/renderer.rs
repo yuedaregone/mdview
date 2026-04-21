@@ -25,7 +25,7 @@ pub fn render_doc(
         *viewport = ViewportState::new(block_count);
     }
 
-    const ESTIMATED_HEIGHT: f32 = 20.0;
+    const ESTIMATED_HEIGHT: f32 = 60.0;
     const BLOCK_SPACING: f32 = 4.0;
 
     let force_full_render = !viewport.initialized;
@@ -44,8 +44,10 @@ pub fn render_doc(
                     ui.set_max_width(content_width);
                     ui.add_space(16.0);
 
+                    let mut space_above = 0.0f32;
+                    let mut space_below = 0.0f32;
                     let mut current_y = 0.0f32;
-                    let content_start_y = ui.cursor().min.y;
+                    let mut in_visible = false;
 
                     for (i, node) in doc.nodes.iter().enumerate() {
                         let cached_h = viewport.blocks
@@ -55,41 +57,42 @@ pub fn render_doc(
                         let block_top = current_y;
                         let block_bottom = block_top + cached_h;
 
-                        let is_visible = block_bottom >= vis_rect.min.y - 100.0
-                            && block_top <= vis_rect.max.y + 100.0;
+                        let is_visible = block_bottom >= vis_rect.min.y - 200.0
+                            && block_top <= vis_rect.max.y + 200.0;
 
                         if is_visible || force_full_render {
-                            let block_rect = Rect::from_min_size(
-                                pos2(ui.min_rect().min.x, content_start_y + block_top),
-                                vec2(content_width, cached_h.max(ESTIMATED_HEIGHT)),
-                            );
+                            if space_above > 0.0 {
+                                ui.add_space(space_above);
+                                space_above = 0.0;
+                            }
+                            in_visible = true;
 
-                            let result = ui.allocate_new_ui(
-                                UiBuilder::new().max_rect(block_rect),
-                                |block_ui| {
-                                    render_block(
-                                        block_ui, node, theme, font_size,
-                                        i, image_loader, selector,
-                                    );
-                                },
-                            );
+                            let before = ui.min_rect().max.y;
 
-                            let actual_h = result.response.rect.height();
+                            render_block(ui, node, theme, font_size, i, image_loader, selector);
+
+                            let actual_h = ui.min_rect().max.y - before;
 
                             if let Some(block) = viewport.blocks.get_mut(i) {
-                                if !block.measured
-                                    || (block.height - actual_h).abs() > 1.0
-                                {
+                                if !block.measured || (block.height - actual_h).abs() > 1.0 {
                                     block.height = actual_h.max(ESTIMATED_HEIGHT);
                                     block.measured = true;
                                 }
                             }
+
+                            ui.add_space(BLOCK_SPACING);
+                        } else if in_visible {
+                            space_below += cached_h + BLOCK_SPACING;
+                        } else {
+                            space_above += cached_h + BLOCK_SPACING;
                         }
 
                         current_y += cached_h + BLOCK_SPACING;
                     }
 
-                    ui.set_min_height(current_y + 32.0);
+                    if space_below > 0.0 {
+                        ui.add_space(space_below);
+                    }
 
                     ui.add_space(32.0);
                 });
@@ -98,7 +101,10 @@ pub fn render_doc(
             });
         });
 
-    viewport.initialized = true;
+    let all_measured = viewport.blocks.iter().all(|b| b.measured);
+    if all_measured {
+        viewport.initialized = true;
+    }
 }
 
 /// Render a block-level node
