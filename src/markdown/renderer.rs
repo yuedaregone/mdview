@@ -45,8 +45,7 @@ pub fn render_doc(
                     ui.add_space(16.0);
 
                     let mut space_above = 0.0f32;
-                    let mut space_below = 0.0f32;
-                    let mut current_y = 0.0f32;
+                    let mut current_y = 16.0f32;
                     let mut in_visible = false;
 
                     for (i, node) in doc.nodes.iter().enumerate() {
@@ -57,8 +56,8 @@ pub fn render_doc(
                         let block_top = current_y;
                         let block_bottom = block_top + cached_h;
 
-                        let is_visible = block_bottom >= vis_rect.min.y - 200.0
-                            && block_top <= vis_rect.max.y + 200.0;
+                        let is_visible = block_bottom >= vis_rect.min.y - 300.0
+                            && block_top <= vis_rect.max.y + 300.0;
 
                         if is_visible || force_full_render {
                             if space_above > 0.0 {
@@ -71,27 +70,28 @@ pub fn render_doc(
 
                             render_block(ui, node, theme, font_size, i, image_loader, selector);
 
-                            let actual_h = ui.min_rect().max.y - before;
+                            ui.add_space(BLOCK_SPACING);
+                            let actual_h = (ui.min_rect().max.y - before - BLOCK_SPACING).max(0.0);
 
                             if let Some(block) = viewport.blocks.get_mut(i) {
-                                if !block.measured || (block.height - actual_h).abs() > 1.0 {
+                                if !block.measured {
                                     block.height = actual_h.max(ESTIMATED_HEIGHT);
                                     block.measured = true;
                                 }
                             }
 
-                            ui.add_space(BLOCK_SPACING);
+                            current_y += actual_h + BLOCK_SPACING;
                         } else if in_visible {
-                            space_below += cached_h + BLOCK_SPACING;
+                            let remaining: f32 = doc.nodes[i..]
+                                .iter()
+                                .map(|_| ESTIMATED_HEIGHT + BLOCK_SPACING)
+                                .sum();
+                            ui.add_space(remaining);
+                            break;
                         } else {
                             space_above += cached_h + BLOCK_SPACING;
+                            current_y += cached_h + BLOCK_SPACING;
                         }
-
-                        current_y += cached_h + BLOCK_SPACING;
-                    }
-
-                    if space_below > 0.0 {
-                        ui.add_space(space_below);
                     }
 
                     ui.add_space(32.0);
