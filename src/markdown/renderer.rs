@@ -26,6 +26,7 @@ pub fn render_doc(
 
     egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
+        .drag_to_scroll(false)
         .show_viewport(ui, |ui, vis_rect| {
             ui.horizontal_top(|ui| {
                 let total_width = ui.available_width();

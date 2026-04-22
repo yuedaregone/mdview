@@ -509,6 +509,31 @@ impl eframe::App for MdViewApp {
         CentralPanel::default()
             .frame(Frame::NONE.fill(self.theme.background))
             .show(ctx, |ui| {
+                // 显示右键主菜单
+                let menu_id = egui::Id::new("mdview_context_menu");
+                crate::context_menu::show_context_menu(
+                    ui,
+                    &mut self.theme,
+                    &mut self.font_size,
+                    &mut self.selector,
+                    &self.file_path,
+                    &mut self.config,
+                    &mut self.config_needs_save,
+                );
+
+                // 显示右键子菜单（在主菜单后绘制，确保 sub_rect 在关闭检测前更新）
+                crate::context_menu::show_submenus(
+                    ctx,
+                    &mut self.theme,
+                    &mut self.font_size,
+                    &mut self.config,
+                    &mut self.config_needs_save,
+                    menu_id,
+                );
+
+                // 检测菜单关闭（在子菜单绘制后执行，确保 sub_rect 已更新）
+                crate::context_menu::check_menu_close(ui, menu_id);
+
                 if let Some(doc) = &self.doc {
                     crate::markdown::renderer::render_doc(
                         ui,
