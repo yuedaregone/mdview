@@ -8,7 +8,7 @@ use super::parser::{Align, DocNode, InlineNode, ListItem, MarkdownDoc, TableCell
 use crate::image_loader::{ImageLoader, ImageState};
 use crate::selection::TextSelector;
 use crate::theme::Theme;
-use crate::viewport::ViewportState;
+use crate::viewport::{ViewportState, DEFAULT_BLOCK_HEIGHT};
 
 /// Render a complete markdown document with viewport culling
 pub fn render_doc(
@@ -21,14 +21,8 @@ pub fn render_doc(
     viewport: &mut ViewportState,
 ) {
     let block_count = doc.nodes.len();
-    if viewport.blocks.len() != block_count {
-        *viewport = ViewportState::new(block_count);
-    }
-
-    const ESTIMATED_HEIGHT: f32 = 60.0;
     const BLOCK_SPACING: f32 = 4.0;
-
-    let force_full_render = !viewport.initialized;
+    let mut heights_changed = false;
 
     egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
@@ -38,6 +32,9 @@ pub fn render_doc(
                 let max_width = 800.0;
                 let content_width = total_width.min(max_width);
                 let margin = (total_width - content_width) / 2.0;
+                viewport.prepare_layout(block_count, content_width, font_size);
+                let force_full_render = !viewport.initialized;
+
                 ui.add_space(margin);
 
                 ui.vertical(|ui| {
@@ -49,11 +46,15 @@ pub fn render_doc(
                     let mut in_visible = false;
 
                     for (i, node) in doc.nodes.iter().enumerate() {
-                        let cached_h = viewport
-                            .blocks
-                            .get(i)
-                            .map(|b| b.height)
-                            .unwrap_or(ESTIMATED_HEIGHT);
+                        let estimated_h = estimate_block_height(node, theme, font_size);
+                        let cached_h = if let Some(block) = viewport.blocks.get_mut(i) {
+                            if !block.measured {
+                                block.height = estimated_h;
+                            }
+                            block.height
+                        } else {
+                            estimated_h
+                        };
                         let block_top = current_y;
                         let block_bottom = block_top + cached_h;
 
@@ -73,19 +74,23 @@ pub fn render_doc(
 
                             ui.add_space(BLOCK_SPACING);
                             let actual_h = (ui.min_rect().max.y - before - BLOCK_SPACING).max(0.0);
+                            let measured_h = actual_h.max(1.0);
 
                             if let Some(block) = viewport.blocks.get_mut(i) {
+                                if !block.measured || (block.height - measured_h).abs() > 0.5 {
+                                    block.height = measured_h;
+                                    heights_changed = true;
+                                }
                                 if !block.measured {
-                                    block.height = actual_h.max(ESTIMATED_HEIGHT);
                                     block.measured = true;
                                 }
                             }
 
-                            current_y += actual_h + BLOCK_SPACING;
+                            current_y += measured_h + BLOCK_SPACING;
                         } else if in_visible {
-                            let remaining: f32 = doc.nodes[i..]
+                            let remaining: f32 = viewport.blocks[i..]
                                 .iter()
-                                .map(|_| ESTIMATED_HEIGHT + BLOCK_SPACING)
+                                .map(|block| block.height + BLOCK_SPACING)
                                 .sum();
                             ui.add_space(remaining);
                             break;
@@ -102,10 +107,114 @@ pub fn render_doc(
             });
         });
 
+    if heights_changed {
+        ui.ctx().request_repaint();
+    }
+
     let all_measured = viewport.blocks.iter().all(|b| b.measured);
     if all_measured {
         viewport.initialized = true;
     }
+}
+
+fn estimate_block_height(node: &DocNode, theme: &Theme, font_size: f32) -> f32 {
+    match node {
+        DocNode::Heading { level, children } => {
+            let text_len = inline_text_len(children) as f32;
+            let approx_lines = estimate_line_count(text_len, 48.0);
+            theme.heading_size(*level, font_size) * approx_lines * 1.2 + 20.0
+        }
+        DocNode::Paragraph(inlines) => {
+            let text_len = inline_text_len(inlines) as f32;
+            font_size * 1.55 * estimate_line_count(text_len, 72.0) + 12.0
+        }
+        DocNode::CodeBlock { lang, code } => {
+            let lines = code.lines().count().max(1).min(32) as f32;
+            let label_height = if lang.is_empty() {
+                0.0
+            } else {
+                font_size * 0.8 + 8.0
+            };
+            lines * font_size * 1.2 + label_height + 40.0
+        }
+        DocNode::Table { rows, .. } => {
+            let row_count = rows.len() as f32 + 1.0;
+            row_count * (font_size * 1.8) + 24.0
+        }
+        DocNode::BlockQuote(children) => {
+            children
+                .iter()
+                .map(|child| estimate_block_height(child, theme, font_size * 0.95))
+                .sum::<f32>()
+                + 12.0
+        }
+        DocNode::OrderedList { items, .. } | DocNode::UnorderedList(items) => {
+            estimate_list_height(items, theme, font_size)
+        }
+        DocNode::TaskList { items } => items
+            .iter()
+            .map(|item| {
+                item.children
+                    .iter()
+                    .map(|child| estimate_block_height(child, theme, font_size))
+                    .sum::<f32>()
+                    + 8.0
+            })
+            .sum::<f32>()
+            .max(font_size * 1.5 + 8.0),
+        DocNode::ThematicBreak => 24.0,
+        DocNode::Image { .. } => 220.0,
+        DocNode::HtmlBlock(html) => {
+            let lines = html.lines().count().max(1).min(24) as f32;
+            lines * font_size * 1.2 + 24.0
+        }
+        DocNode::FootnoteDef { content, .. } => {
+            content
+                .iter()
+                .map(|child| estimate_block_height(child, theme, font_size))
+                .sum::<f32>()
+                + font_size * 1.4
+        }
+    }
+    .max(DEFAULT_BLOCK_HEIGHT * 0.5)
+}
+
+fn estimate_list_height(items: &[ListItem], theme: &Theme, font_size: f32) -> f32 {
+    items
+        .iter()
+        .map(|item| {
+            item.children
+                .iter()
+                .map(|child| estimate_block_height(child, theme, font_size))
+                .sum::<f32>()
+                + 8.0
+        })
+        .sum::<f32>()
+        .max(font_size * 1.5 + 8.0)
+}
+
+fn inline_text_len(inlines: &[InlineNode]) -> usize {
+    inlines.iter().map(inline_len).sum()
+}
+
+fn inline_len(inline: &InlineNode) -> usize {
+    match inline {
+        InlineNode::Text(s)
+        | InlineNode::Code(s)
+        | InlineNode::Superscript(s)
+        | InlineNode::HtmlInline(s) => s.chars().count(),
+        InlineNode::Bold(children)
+        | InlineNode::Italic(children)
+        | InlineNode::Strikethrough(children) => inline_text_len(children),
+        InlineNode::Link { children, .. } => inline_text_len(children),
+        InlineNode::Image { alt, .. } => alt.chars().count().max(8),
+        InlineNode::SoftBreak | InlineNode::HardBreak => 1,
+        InlineNode::FootnoteRef(label) => label.chars().count() + 3,
+    }
+}
+
+fn estimate_line_count(text_len: f32, chars_per_line: f32) -> f32 {
+    (text_len / chars_per_line).ceil().clamp(1.0, 12.0)
 }
 
 /// Render a block-level node

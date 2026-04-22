@@ -2,7 +2,8 @@
 //!
 //! Tracks scroll position and viewport dimensions.
 
-const ESTIMATED_LINE_HEIGHT: f32 = 60.0;
+pub const DEFAULT_BLOCK_HEIGHT: f32 = 60.0;
+const LAYOUT_EPSILON: f32 = 0.5;
 
 #[derive(Debug, Clone)]
 pub struct BlockLayout {
@@ -14,6 +15,8 @@ pub struct BlockLayout {
 pub struct ViewportState {
     pub blocks: Vec<BlockLayout>,
     pub initialized: bool,
+    content_width: f32,
+    font_size: f32,
 }
 
 impl ViewportState {
@@ -21,11 +24,37 @@ impl ViewportState {
         Self {
             blocks: (0..block_count)
                 .map(|_| BlockLayout {
-                    height: ESTIMATED_LINE_HEIGHT,
+                    height: DEFAULT_BLOCK_HEIGHT,
                     measured: false,
                 })
                 .collect(),
             initialized: false,
+            content_width: 0.0,
+            font_size: 0.0,
         }
+    }
+
+    pub fn reset(&mut self, block_count: usize) {
+        *self = Self::new(block_count);
+    }
+
+    pub fn prepare_layout(
+        &mut self,
+        block_count: usize,
+        content_width: f32,
+        font_size: f32,
+    ) -> bool {
+        let needs_reset = self.blocks.len() != block_count
+            || (self.content_width - content_width).abs() > LAYOUT_EPSILON
+            || (self.font_size - font_size).abs() > f32::EPSILON;
+
+        if needs_reset {
+            self.reset(block_count);
+        }
+
+        self.content_width = content_width;
+        self.font_size = font_size;
+
+        needs_reset
     }
 }

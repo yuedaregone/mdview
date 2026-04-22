@@ -317,6 +317,7 @@ impl MdViewApp {
             Ok(content) => {
                 self.error_msg = None;
                 self.doc = Some(self.ast_cache.get_or_parse(&path, &content));
+                self.viewport.reset(0);
                 if let Some(dir) = path.parent() {
                     self.image_loader.set_base_dir(dir.to_path_buf());
                 }
