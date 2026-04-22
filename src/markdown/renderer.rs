@@ -33,7 +33,6 @@ pub fn render_doc(
                 let content_width = total_width.min(max_width);
                 let margin = (total_width - content_width) / 2.0;
                 viewport.prepare_layout(block_count, content_width, font_size);
-                let force_full_render = !viewport.initialized;
 
                 ui.add_space(margin);
 
@@ -46,22 +45,21 @@ pub fn render_doc(
                     let mut in_visible = false;
 
                     for (i, node) in doc.nodes.iter().enumerate() {
-                        let estimated_h = estimate_block_height(node, theme, font_size);
                         let cached_h = if let Some(block) = viewport.blocks.get_mut(i) {
                             if !block.measured {
-                                block.height = estimated_h;
+                                block.height = estimate_block_height(node, theme, font_size);
                             }
                             block.height
                         } else {
-                            estimated_h
+                            estimate_block_height(node, theme, font_size)
                         };
                         let block_top = current_y;
                         let block_bottom = block_top + cached_h;
 
-                        let is_visible = block_bottom >= vis_rect.min.y - 300.0
-                            && block_top <= vis_rect.max.y + 300.0;
+                        let is_visible = block_bottom >= vis_rect.min.y - 200.0
+                            && block_top <= vis_rect.max.y + 200.0;
 
-                        if is_visible || force_full_render {
+                        if is_visible {
                             if space_above > 0.0 {
                                 ui.add_space(space_above);
                                 space_above = 0.0;
@@ -111,10 +109,6 @@ pub fn render_doc(
         ui.ctx().request_repaint();
     }
 
-    let all_measured = viewport.blocks.iter().all(|b| b.measured);
-    if all_measured {
-        viewport.initialized = true;
-    }
 }
 
 fn estimate_block_height(node: &DocNode, theme: &Theme, font_size: f32) -> f32 {
@@ -310,7 +304,6 @@ fn render_heading(
 ) {
     let size = theme.heading_size(level, font_size);
     ui.add_space(8.0);
-    let before = ui.cursor().min;
     render_inlines(
         ui,
         children,
@@ -320,11 +313,6 @@ fn render_heading(
         selector,
         ui.id().with("heading").with(block_index),
     );
-    let after = ui.cursor().min;
-    // Record text segment for selection
-    let plain = children.iter().map(|n| n.plain_text()).collect::<String>();
-    let rect = egui::Rect::from_min_max(before, egui::pos2(ui.max_rect().right(), after.y));
-    selector.add_segment(rect, plain);
     ui.add_space(4.0);
 }
 
@@ -338,7 +326,6 @@ fn render_paragraph(
     selector: &mut TextSelector,
     block_index: usize,
 ) {
-    let before = ui.cursor().min;
     render_inlines(
         ui,
         inlines,
@@ -348,10 +335,6 @@ fn render_paragraph(
         selector,
         ui.id().with("paragraph").with(block_index),
     );
-    let after = ui.cursor().min;
-    let plain = inlines.iter().map(|n| n.plain_text()).collect::<String>();
-    let rect = egui::Rect::from_min_max(before, egui::pos2(ui.max_rect().right(), after.y));
-    selector.add_segment(rect, plain);
     ui.add_space(8.0);
 }
 
@@ -825,56 +808,57 @@ fn render_inlines(
     let max_width = ui.available_width();
     let (job, links) = inlines_to_rich_text(inlines, theme, font_size, default_color, max_width);
     let plain_text = job.text.clone();
+    let has_links = !links.is_empty();
 
-    // Layout for link hit testing
-    let galley = if !links.is_empty() {
-        Some(ui.fonts(|f| f.layout_job(job.clone())))
-    } else {
-        None
-    };
+    // Clone job only if we have links (for possible hit-testing later)
+    let job_for_hit_test = if has_links { Some(job.clone()) } else { None };
 
-    // Use Label: preserve native text selection
     let label_response = ui.label(job);
     let rect = label_response.rect;
 
-    // Link hit test
-    if let Some(ref galley) = galley {
-        // Hover: show pointer hand
-        if let Some(hover_pos) = ui.input(|i| i.pointer.hover_pos()) {
-            if rect.contains(hover_pos) {
-                let rel = hover_pos - rect.min;
-                let char_idx = galley.cursor_from_pos(rel).ccursor.index;
+    // Only do link hit testing when pointer is within this block's rect or clicked
+    if has_links {
+        let pointer_in_rect = ui
+            .input(|i| i.pointer.hover_pos())
+            .is_some_and(|p| rect.contains(p));
+        let was_clicked = label_response.clicked();
 
-                for (url, range) in &links {
-                    let _ = url;
-                    if range.contains(&char_idx) {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        if pointer_in_rect || was_clicked {
+            // Create galley only when actually needed for hit testing
+            if let Some(hit_job) = job_for_hit_test {
+                let galley = ui.fonts(|f| f.layout_job(hit_job));
+
+                if pointer_in_rect {
+                    if let Some(hover_pos) = ui.input(|i| i.pointer.hover_pos()) {
+                        let rel = hover_pos - rect.min;
+                        let char_idx = galley.cursor_from_pos(rel).ccursor.index;
+                        for (_url, range) in &links {
+                            if range.contains(&char_idx) {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                            }
+                        }
                     }
                 }
-            }
-        }
 
-        // Click: open link on click (not drag)
-        if label_response.clicked() {
-            if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
-                if rect.contains(pos) {
-                    let rel = pos - rect.min;
-                    let char_idx = galley.cursor_from_pos(rel).ccursor.index;
-
-                    for (url, range) in &links {
-                        if range.contains(&char_idx) {
-                            if url.starts_with('#') {
-                                // Anchor link - show info (egui doesn't have built-in anchor scrolling)
-                                let anchor = url.trim_start_matches('#');
-                                tracing::info!("Anchor link clicked: #{}", anchor);
-                            } else if url.starts_with("file://")
-                                || url.starts_with("http://")
-                                || url.starts_with("https://")
-                            {
-                                let _ = open::that(url);
-                            } else if !url.contains("://") && !url.contains(':') {
-                                // Relative path - try to open
-                                let _ = open::that(url);
+                if was_clicked {
+                    if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+                        if rect.contains(pos) {
+                            let rel = pos - rect.min;
+                            let char_idx = galley.cursor_from_pos(rel).ccursor.index;
+                            for (url, range) in &links {
+                                if range.contains(&char_idx) {
+                                    if url.starts_with('#') {
+                                        let anchor = url.trim_start_matches('#');
+                                        tracing::info!("Anchor link clicked: #{}", anchor);
+                                    } else if url.starts_with("file://")
+                                        || url.starts_with("http://")
+                                        || url.starts_with("https://")
+                                    {
+                                        let _ = open::that(url);
+                                    } else if !url.contains("://") && !url.contains(':') {
+                                        let _ = open::that(url);
+                                    }
+                                }
                             }
                         }
                     }

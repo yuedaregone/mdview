@@ -447,11 +447,13 @@ impl eframe::App for MdViewApp {
                 if input.key_pressed(egui::Key::Equals) {
                     self.font_size = (self.font_size + 2.0).min(32.0);
                     self.save_config();
+                    crate::markdown::highlight::clear_highlight_cache();
                 }
                 // Ctrl+- - Decrease font size
                 if input.key_pressed(egui::Key::Minus) {
                     self.font_size = (self.font_size - 2.0).max(8.0);
                     self.save_config();
+                    crate::markdown::highlight::clear_highlight_cache();
                 }
                 // Ctrl+0 - Reset font size
                 if input.key_pressed(egui::Key::Num0) {
@@ -474,6 +476,7 @@ impl eframe::App for MdViewApp {
                         let next_idx = (idx + 1) % themes.len();
                         self.theme = themes[next_idx].clone();
                         self.save_config();
+                        crate::markdown::highlight::clear_highlight_cache();
                     }
                 }
             }

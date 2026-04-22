@@ -1,6 +1,7 @@
 //! Syntax highlighting using syntect → egui LayoutJob
 
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{FontStyle as SyntectFontStyle, ThemeSet};
@@ -111,15 +112,58 @@ impl Highlighter {
 }
 
 static HIGHLIGHTER: OnceLock<Highlighter> = OnceLock::new();
+static HIGHLIGHT_CACHE: OnceLock<Mutex<HashMap<u64, LayoutJob>>> = OnceLock::new();
+
+fn cache_key(code: &str, lang: &str, theme_name: &str, font_size: f32) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    code.hash(&mut hasher);
+    lang.hash(&mut hasher);
+    theme_name.hash(&mut hasher);
+    font_size.to_bits().hash(&mut hasher);
+    hasher.finish()
+}
 
 /// Highlight code and return a LayoutJob suitable for egui rendering.
 /// Returns None if highlighting fails (caller should fall back to plain text).
+/// Results are cached to avoid re-highlighting every frame.
 pub fn highlight_code(
     code: &str,
     lang: &str,
     theme_name: &str,
     font_size: f32,
 ) -> Option<LayoutJob> {
+    let key = cache_key(code, lang, theme_name, font_size);
+    let cache = HIGHLIGHT_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+
+    // Check cache first
+    if let Ok(guard) = cache.lock() {
+        if let Some(job) = guard.get(&key) {
+            return Some(job.clone());
+        }
+    }
+
+    // Cache miss - do the highlight
     let highlighter = HIGHLIGHTER.get_or_init(Highlighter::new);
-    highlighter.highlight(code, lang, theme_name, font_size)
+    let job = highlighter.highlight(code, lang, theme_name, font_size)?;
+
+    // Store in cache
+    if let Ok(mut guard) = cache.lock() {
+        // Limit cache size to prevent unbounded growth
+        if guard.len() > 512 {
+            guard.clear();
+        }
+        guard.insert(key, job.clone());
+    }
+
+    Some(job)
+}
+
+/// Clear the highlight cache (call when theme or font size changes)
+pub fn clear_highlight_cache() {
+    if let Some(cache) = HIGHLIGHT_CACHE.get() {
+        if let Ok(mut guard) = cache.lock() {
+            guard.clear();
+        }
+    }
 }

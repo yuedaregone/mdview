@@ -14,7 +14,6 @@ pub struct BlockLayout {
 #[derive(Debug, Clone)]
 pub struct ViewportState {
     pub blocks: Vec<BlockLayout>,
-    pub initialized: bool,
     content_width: f32,
     font_size: f32,
 }
@@ -28,7 +27,6 @@ impl ViewportState {
                     measured: false,
                 })
                 .collect(),
-            initialized: false,
             content_width: 0.0,
             font_size: 0.0,
         }
