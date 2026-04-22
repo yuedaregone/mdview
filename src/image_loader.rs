@@ -6,6 +6,7 @@
 //! - data: URIs (base64 embedded)
 
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -232,15 +233,17 @@ fn load_local_image(path: &str) -> Result<ImageData, String> {
 
 /// Load an image from HTTP/HTTPS
 fn load_http_image(url: &str) -> Result<ImageData, String> {
-    let response = reqwest::blocking::Client::new()
-        .get(url)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
+    let response = ureq::get(url)
+        .call()
         .map_err(|e| format!("HTTP request failed: {}", e))?;
 
-    let data = response
-        .bytes()
+    let mut data = Vec::new();
+    response
+        .into_body()
+        .into_reader()
+        .read_to_end(&mut data)
         .map_err(|e| format!("Failed to read response: {}", e))?;
+
     decode_image(&data)
 }
 

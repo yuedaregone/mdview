@@ -6,25 +6,20 @@ description = "A blazingly fast, ultra-lightweight Markdown reader"
 license = "MIT"
 
 [dependencies]
-eframe = { version = "0.31", features = ["persistence"] }
+eframe = { version = "0.31", default-features = false, features = ["glow", "persistence"] }
 egui = "0.31"
 comrak = { version = "0.39", default-features = false, features = ["shortcodes"] }
-syntect = "5.2"
-two-face = "0.4"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+syntect = { version = "5.2", default-features = false, features = ["default-fancy"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 open = "5"
 arboard = "3"
-clap = { version = "4", features = ["derive"] }
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 base64 = "0.22"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 dirs = "5"
 tracing = "0.1"
 rfd = "0.15"
-font-kit = "0.14"
-notify = "6"
-notify-debouncer-full = "0.3"
+fontdb = "0.23"
 toml = "0.8"
 
 [profile.release]

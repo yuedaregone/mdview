@@ -17,7 +17,7 @@ struct Highlighter {
 
 impl Highlighter {
     fn new() -> Self {
-        let syntax_set = two_face::syntax::extra_newlines();
+        let syntax_set = SyntaxSet::load_defaults_nonewlines();
         let theme_set = ThemeSet::load_defaults();
         Self {
             syntax_set,

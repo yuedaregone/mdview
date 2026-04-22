@@ -1,4 +1,3 @@
-use clap::Parser;
 use std::path::PathBuf;
 
 mod app;
@@ -9,20 +8,30 @@ mod selection;
 mod theme;
 mod viewport;
 
-/// A blazingly fast, ultra-lightweight Markdown reader
-#[derive(Parser, Debug)]
-#[command(name = "mdview", version, about)]
 struct Args {
-    /// Markdown file to open
     file: Option<PathBuf>,
-
-    /// Register .md file association (Windows only)
-    #[arg(long)]
     register: bool,
-
-    /// Unregister .md file association (Windows only)
-    #[arg(long)]
     unregister: bool,
+}
+
+impl Args {
+    fn parse() -> Self {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        let mut file = None;
+        let mut register = false;
+        let mut unregister = false;
+
+        for arg in args {
+            match arg.as_str() {
+                "--register" => register = true,
+                "--unregister" => unregister = true,
+                a if a.starts_with('-') => {}
+                _ if file.is_none() => file = Some(PathBuf::from(arg)),
+                _ => {}
+            }
+        }
+        Self { file, register, unregister }
+    }
 }
 
 fn main() -> eframe::Result<()> {

@@ -36,13 +36,13 @@ impl AppConfig {
             .unwrap_or_else(|| PathBuf::from("."))
             .join("mdview");
         std::fs::create_dir_all(&config_dir).ok();
-        config_dir.join("config.json")
+        config_dir.join("config.toml")
     }
 
     pub fn load() -> Self {
         let path = Self::config_path();
         if let Ok(content) = std::fs::read_to_string(&path) {
-            serde_json::from_str(&content).unwrap_or_default()
+            toml::from_str(&content).unwrap_or_default()
         } else {
             Self::default()
         }
@@ -50,8 +50,7 @@ impl AppConfig {
 
     pub fn save(&self) -> Result<(), String> {
         let path = Self::config_path();
-        let content =
-            serde_json::to_string_pretty(self).map_err(|e| format!("序列化配置失败: {}", e))?;
+        let content = toml::to_string_pretty(self).map_err(|e| format!("序列化配置失败: {}", e))?;
         std::fs::write(&path, content).map_err(|e| format!("保存配置失败: {}", e))
     }
 }

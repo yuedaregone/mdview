@@ -2,9 +2,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use egui::*;
-use font_kit::family_name::FamilyName;
-use font_kit::properties::Properties;
-use font_kit::source::SystemSource;
+use fontdb::Database as FontDatabase;
 
 use std::sync::Arc;
 use crate::config::AppConfig;
@@ -14,30 +12,39 @@ use crate::markdown::parser::MarkdownDoc;
 use crate::selection::TextSelector;
 use crate::theme::Theme;
 use crate::viewport::ViewportState;
-use notify_debouncer_full::{Debouncer, new_debouncer, DebouncedEvent, FileIdMap};
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
 fn load_system_font(name: Option<&str>) -> Option<(String, Vec<u8>)> {
-    let source = SystemSource::new();
+    let mut db = FontDatabase::new();
+    db.load_system_fonts();
 
-    let families = if let Some(name) = name {
-        vec![FamilyName::Title(name.to_string())]
+    let families: Vec<fontdb::Family> = if let Some(name) = name {
+        vec![fontdb::Family::Name(name)]
     } else {
         vec![
-            FamilyName::Title("Microsoft YaHei".to_string()),
-            FamilyName::Title("PingFang SC".to_string()),
-            FamilyName::Title("Noto Sans CJK SC".to_string()),
-            FamilyName::Title("Segoe UI".to_string()),
-            FamilyName::SansSerif,
+            fontdb::Family::Name("Microsoft YaHei"),
+            fontdb::Family::Name("PingFang SC"),
+            fontdb::Family::Name("Noto Sans CJK SC"),
+            fontdb::Family::Name("Segoe UI"),
+            fontdb::Family::SansSerif,
         ]
     };
 
-    let handle = source
-        .select_best_match(&families, &Properties::new())
-        .ok()?;
+    let query = fontdb::Query {
+        families: &families,
+        weight: fontdb::Weight::NORMAL,
+        stretch: fontdb::Stretch::Normal,
+        style: fontdb::Style::Normal,
+    };
 
-    let data = handle.load().ok()?.copy_font_data()?.to_vec();
-    let font_name = name.unwrap_or("system").to_string();
+    let id = db.query(&query)?;
+    let face = db.face(id)?;
+
+    let data: Vec<u8> = match &face.source {
+        fontdb::Source::Binary(bin) => bin.as_ref().as_ref().to_vec(),
+        fontdb::Source::File(path) => std::fs::read(path).ok()?,
+        fontdb::Source::SharedFile(path, _) => std::fs::read(path).ok()?,
+    };
+    let font_name = face.families.first()?.0.clone();
 
     Some((font_name, data))
 }
@@ -67,6 +74,45 @@ fn setup_fonts(ctx: &egui::Context, font_name: Option<&str>) {
     ctx.set_fonts(fonts);
 }
 
+struct SimpleFileWatcher {
+    path: Option<PathBuf>,
+    last_modified: Option<std::time::SystemTime>,
+    last_checked: Instant,
+}
+
+impl SimpleFileWatcher {
+    fn new(path: Option<PathBuf>) -> Self {
+        let last_modified = path
+            .as_ref()
+            .and_then(|p| std::fs::metadata(p).ok())
+            .and_then(|m| m.modified().ok());
+        Self {
+            path,
+            last_modified,
+            last_checked: Instant::now(),
+        }
+    }
+
+    fn check(&mut self) -> bool {
+        if self.last_checked.elapsed() < std::time::Duration::from_secs(2) {
+            return false;
+        }
+        self.last_checked = Instant::now();
+
+        if let Some(path) = &self.path {
+            if let Ok(meta) = std::fs::metadata(path) {
+                if let Ok(modified) = meta.modified() {
+                    if Some(modified) != self.last_modified {
+                        self.last_modified = Some(modified);
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+}
+
 /// Main application state
 pub struct MdViewApp {
     /// Current file path
@@ -93,15 +139,13 @@ pub struct MdViewApp {
     config: AppConfig,
     /// Whether window is maximized
     window_maximized: bool,
-    /// File system event debouncer
-    file_watcher: Debouncer<RecommendedWatcher, FileIdMap>,
-    /// Receiver for file system events
-    file_events_rx: std::sync::mpsc::Receiver<Result<Vec<DebouncedEvent>, Vec<notify::Error>>>,
+    /// Simple file watcher
+    file_watcher: SimpleFileWatcher,
     /// Flag to indicate if config needs saving
     config_needs_save: bool,
     /// Last time config was saved
     last_save_time: Instant,
-    }
+}
 impl MdViewApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
@@ -135,32 +179,7 @@ impl MdViewApp {
             Theme::default_theme()
         };
 
-        // Setup file watcher
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut debouncer = match new_debouncer(
-            std::time::Duration::from_millis(200),
-            None,
-            tx,
-        ) {
-            Ok(d) => d,
-            Err(e) => {
-                tracing::warn!("Failed to create file watcher: {}", e);
-                panic!("File watcher creation failed: {}", e);
-            }
-        };
-
-        if let Some(ref path) = file_path {
-            if let Some(dir) = path.parent() {
-                if debouncer.watcher().watch(dir, RecursiveMode::Recursive).is_err() {
-                    tracing::warn!("Failed to watch directory: {:?}", dir);
-                }
-            } else if debouncer.watcher().watch(&base_dir, RecursiveMode::Recursive).is_err() {
-                tracing::warn!("Failed to watch base directory");
-            }
-        } else if debouncer.watcher().watch(&base_dir, RecursiveMode::Recursive).is_err() {
-            tracing::warn!("Failed to watch base directory");
-        }
-
+        let file_watcher = SimpleFileWatcher::new(file_path.clone());
 
         let doc = doc.map(Arc::new);
 
@@ -177,8 +196,7 @@ impl MdViewApp {
             error_msg: None,
             config,
             window_maximized: false,
-            file_watcher: debouncer,
-            file_events_rx: rx,
+            file_watcher,
             config_needs_save: false,
             last_save_time: Instant::now(),
         }
@@ -186,24 +204,15 @@ impl MdViewApp {
 
     /// Load a new file (using AST cache)
     pub fn load_file(&mut self, path: PathBuf) {
-        // Stop watching previous file's directory if any
-        if let Some(old_path) = self.file_path.as_ref() {
-            if let Some(old_dir) = old_path.parent() {
-                let _ = self.file_watcher.watcher().unwatch(old_dir);
-            }
-        }
-
         match std::fs::read_to_string(&path) {
             Ok(content) => {
                 self.error_msg = None;
                 self.doc = Some(self.ast_cache.get_or_parse(&path, &content));
                 if let Some(dir) = path.parent() {
                     self.image_loader.set_base_dir(dir.to_path_buf());
-                    if self.file_watcher.watcher().watch(dir, RecursiveMode::Recursive).is_err() {
-                        tracing::warn!("Failed to watch directory: {:?}", dir);
-                    }
                 }
                 self.file_path = Some(path.clone());
+                self.file_watcher = SimpleFileWatcher::new(Some(path.clone()));
                 self.config.last_file = Some(path.to_string_lossy().to_string());
                 self.save_config();
             }
@@ -353,27 +362,11 @@ impl eframe::App for MdViewApp {
             }
         });
 
-        // Handle file watcher events
-        while let Ok(result) = self.file_events_rx.try_recv() {
-            match result {
-                Ok(events) => {
-                    for event in events {
-                        if event.kind.is_modify() {
-                            // Check if any of the modified paths is our current file
-                            if let Some(current_file) = &self.file_path {
-                                if event.paths.contains(current_file) {
-                                    self.load_file(current_file.clone());
-                                    ctx.request_repaint();
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(errors) => {
-                    for error in errors {
-                        tracing::error!("File watcher error: {}", error);
-                    }
-                }
+        // Handle file watcher polling (every 2 seconds)
+        if self.file_watcher.check() {
+            if let Some(path) = &self.file_path.clone() {
+                self.load_file(path.clone());
+                ctx.request_repaint();
             }
         }
 
