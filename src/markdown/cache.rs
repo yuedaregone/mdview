@@ -24,7 +24,7 @@ fn content_hash(s: &str) -> u64 {
 use std::sync::Arc;
 
 struct AstCacheEntry {
-    doc: Arc<MarkdownDoc>,  // 使用 Arc 共享所有权
+    doc: Arc<MarkdownDoc>, // 使用 Arc 共享所有权
     hash: u64,
 }
 
@@ -48,7 +48,7 @@ impl AstCache {
 
         if let Some(entry) = self.entries.get(path) {
             if entry.hash == hash {
-                return Arc::clone(&entry.doc);  // 只增加引用计数，不拷贝数据
+                return Arc::clone(&entry.doc); // 只增加引用计数，不拷贝数据
             }
         }
 

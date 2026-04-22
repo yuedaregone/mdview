@@ -283,9 +283,7 @@ fn convert_inline<'a>(node: &'a AstNode<'a>) -> Option<InlineNode> {
 
         NodeValue::Image(_image_node) => {
             let alt = collect_text(node);
-            Some(InlineNode::Image {
-                alt,
-            })
+            Some(InlineNode::Image { alt })
         }
 
         NodeValue::FootnoteReference(fn_ref) => Some(InlineNode::FootnoteRef(fn_ref.name.clone())),

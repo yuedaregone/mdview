@@ -49,7 +49,8 @@ pub fn render_doc(
                     let mut in_visible = false;
 
                     for (i, node) in doc.nodes.iter().enumerate() {
-                        let cached_h = viewport.blocks
+                        let cached_h = viewport
+                            .blocks
                             .get(i)
                             .map(|b| b.height)
                             .unwrap_or(ESTIMATED_HEIGHT);
@@ -135,10 +136,27 @@ fn render_block(
             render_table(ui, headers, rows, aligns, theme, font_size, index);
         }
         DocNode::BlockQuote(children) => {
-            render_block_quote(ui, children, theme, font_size, image_loader, selector, index);
+            render_block_quote(
+                ui,
+                children,
+                theme,
+                font_size,
+                image_loader,
+                selector,
+                index,
+            );
         }
         DocNode::OrderedList { start, items } => {
-            render_ordered_list(ui, *start, items, theme, font_size, image_loader, selector, index);
+            render_ordered_list(
+                ui,
+                *start,
+                items,
+                theme,
+                font_size,
+                image_loader,
+                selector,
+                index,
+            );
         }
         DocNode::UnorderedList(items) => {
             render_unordered_list(ui, items, theme, font_size, image_loader, selector, index);
@@ -156,7 +174,16 @@ fn render_block(
             render_html_block(ui, html, theme, font_size);
         }
         DocNode::FootnoteDef { label, content } => {
-            render_footnote_def(ui, label, content, theme, font_size, image_loader, selector, index);
+            render_footnote_def(
+                ui,
+                label,
+                content,
+                theme,
+                font_size,
+                image_loader,
+                selector,
+                index,
+            );
         }
     }
 }
@@ -316,8 +343,15 @@ fn render_table(
                         for (row_idx, row) in rows.iter().enumerate() {
                             for (col_idx, cell) in row.iter().enumerate() {
                                 let align = aligns.get(col_idx).copied().unwrap_or(Align::None);
-                                let cell_id = ui.id().with("table_cell_d").with(block_index).with(row_idx).with(col_idx);
-                                render_table_cell(ui, cell, align, theme, font_size, false, cell_id);
+                                let cell_id = ui
+                                    .id()
+                                    .with("table_cell_d")
+                                    .with(block_index)
+                                    .with(row_idx)
+                                    .with(col_idx);
+                                render_table_cell(
+                                    ui, cell, align, theme, font_size, false, cell_id,
+                                );
                             }
                             ui.end_row();
                         }
@@ -325,8 +359,6 @@ fn render_table(
             });
     });
 }
-
-
 
 fn render_table_cell(
     ui: &mut Ui,
@@ -417,8 +449,6 @@ fn render_block_quote(
 }
 
 // ─── Lists ──────────────────────────────────────────────────────────────────
-
-
 
 #[allow(clippy::too_many_arguments)]
 fn render_ordered_list(
@@ -577,8 +607,14 @@ fn render_image(
 
     match image_loader.get(url) {
         ImageState::Ready(texture_id) => {
-            let size = ui.ctx().tex_manager().read().meta(*texture_id).unwrap().size;
-let size = egui::vec2(size[0] as f32, size[1] as f32);
+            let size = ui
+                .ctx()
+                .tex_manager()
+                .read()
+                .meta(*texture_id)
+                .unwrap()
+                .size;
+            let size = egui::vec2(size[0] as f32, size[1] as f32);
             let scale = if size.x > max_width {
                 max_width / size.x
             } else {
@@ -658,17 +694,10 @@ fn render_footnote_def(
         ui.add_space(4.0);
         ui.vertical(|ui| {
             for child in content.iter() {
-                render_block(
-                    ui,
-                    child,
-                    theme,
-                    font_size,
-                    index,
-                    image_loader,
-                    selector,
-                );
+                render_block(ui, child, theme, font_size, index, image_loader, selector);
             }
-        });    });
+        });
+    });
 }
 
 // ─── Inline Rendering ───────────────────────────────────────────────────────
@@ -877,8 +906,10 @@ fn append_inlines_to_job(
                 push_section(job, " ", font_size, color, style, is_in_link);
             }
             InlineNode::HardBreak => {
-                push_section(job, "
-", font_size, color, style, is_in_link);
+                push_section(
+                    job, "
+", font_size, color, style, is_in_link,
+                );
             }
             InlineNode::FootnoteRef(label) => {
                 push_section(

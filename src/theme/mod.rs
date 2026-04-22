@@ -35,7 +35,7 @@ pub struct Theme {
 }
 
 use std::fs;
-use std::path::{PathBuf};
+use std::path::PathBuf;
 
 impl Default for Theme {
     fn default() -> Self {

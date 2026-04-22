@@ -49,10 +49,7 @@ impl TextSelector {
     /// Register a text segment during rendering
     pub fn add_segment(&mut self, rect: Rect, text: String) {
         if !text.is_empty() && rect.width() > 0.0 {
-            self.segments.push(TextSegment {
-                rect,
-                text,
-            });
+            self.segments.push(TextSegment { rect, text });
         }
     }
 
@@ -117,8 +114,7 @@ impl TextSelector {
 
         self.selected_text = selected;
     }
-
-    }
+}
 
 impl Default for TextSelector {
     fn default() -> Self {

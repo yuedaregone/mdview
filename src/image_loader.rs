@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::PathBuf;
-use std::sync::mpsc::{Receiver, Sender};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 
 use egui::{Context, TextureOptions};
@@ -20,8 +20,14 @@ const MAX_CONCURRENT_LOADS: usize = 4;
 
 /// Messages sent from loader threads
 enum ImageMsg {
-    Ready { key: String, image: egui::ColorImage },
-    Failed { key: String, reason: String },
+    Ready {
+        key: String,
+        image: egui::ColorImage,
+    },
+    Failed {
+        key: String,
+        reason: String,
+    },
 }
 
 /// State of an image in the cache
@@ -82,7 +88,8 @@ impl ImageLoader {
                 ImageMsg::Ready { key, image } => {
                     if let Some(ctx) = &self.ctx {
                         let texture_handle = ctx.load_texture(&key, image, TextureOptions::LINEAR);
-                        self.cache.insert(key, ImageState::Ready(texture_handle.id()));
+                        self.cache
+                            .insert(key, ImageState::Ready(texture_handle.id()));
                         any_ready = true;
                     }
                 }
@@ -191,7 +198,10 @@ impl ImageLoader {
                         [image_data.width as usize, image_data.height as usize],
                         &image_data.rgba,
                     );
-                    let _ = tx.send(ImageMsg::Ready { key, image: color_image });
+                    let _ = tx.send(ImageMsg::Ready {
+                        key,
+                        image: color_image,
+                    });
                 }
                 Err(reason) => {
                     tracing::error!("Image load failed for {}: {}", key, reason);

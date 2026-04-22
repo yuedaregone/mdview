@@ -2,9 +2,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use egui::*;
-use fontdb::Database as FontDatabase;
 
-use std::sync::Arc;
 use crate::config::AppConfig;
 use crate::image_loader::ImageLoader;
 use crate::markdown::cache::AstCache;
@@ -12,64 +10,175 @@ use crate::markdown::parser::MarkdownDoc;
 use crate::selection::TextSelector;
 use crate::theme::Theme;
 use crate::viewport::ViewportState;
+use std::sync::Arc;
 
-fn load_system_font(name: Option<&str>) -> Option<(String, Vec<u8>)> {
-    let mut db = FontDatabase::new();
-    db.load_system_fonts();
-
-    let families: Vec<fontdb::Family> = if let Some(name) = name {
-        vec![fontdb::Family::Name(name)]
-    } else {
-        vec![
-            fontdb::Family::Name("Microsoft YaHei"),
-            fontdb::Family::Name("PingFang SC"),
-            fontdb::Family::Name("Noto Sans CJK SC"),
-            fontdb::Family::Name("Segoe UI"),
-            fontdb::Family::SansSerif,
-        ]
-    };
-
-    let query = fontdb::Query {
-        families: &families,
-        weight: fontdb::Weight::NORMAL,
-        stretch: fontdb::Stretch::Normal,
-        style: fontdb::Style::Normal,
-    };
-
-    let id = db.query(&query)?;
-    let face = db.face(id)?;
-
-    let data: Vec<u8> = match &face.source {
-        fontdb::Source::Binary(bin) => bin.as_ref().as_ref().to_vec(),
-        fontdb::Source::File(path) => std::fs::read(path).ok()?,
-        fontdb::Source::SharedFile(path, _) => std::fs::read(path).ok()?,
-    };
-    let font_name = face.families.first()?.0.clone();
-
-    Some((font_name, data))
+struct LoadedFont {
+    id: String,
+    data: Arc<egui::FontData>,
 }
 
-fn setup_fonts(ctx: &egui::Context, font_name: Option<&str>) {
-    let mut fonts = egui::FontDefinitions::empty();
+#[derive(Default)]
+struct FontResolver {
+    db: Option<fontdb::Database>,
+}
 
-    if let Some((name, data)) = load_system_font(font_name) {
-        fonts.font_data.insert(
-            name.clone(),
-            std::sync::Arc::new(egui::FontData::from_owned(data)),
-        );
+impl FontResolver {
+    fn resolve(
+        &mut self,
+        configured_name: Option<&str>,
+        configured_path: Option<&str>,
+        fallback_names: &[&str],
+    ) -> Option<LoadedFont> {
+        if let Some(font) = Self::load_from_path(configured_path) {
+            return Some(font);
+        }
 
-        fonts
-            .families
-            .entry(egui::FontFamily::Proportional)
-            .or_default()
-            .insert(0, name.clone());
+        if let Some(name) = configured_name {
+            if let Some(font) = self.find_by_name(name) {
+                return Some(font);
+            }
+            tracing::warn!("Configured font '{name}' was not found in system fonts");
+        }
 
-        fonts
-            .families
-            .entry(egui::FontFamily::Monospace)
-            .or_default()
-            .insert(0, name.clone());
+        for fallback in fallback_names {
+            if let Some(font) = self.find_by_name(fallback) {
+                return Some(font);
+            }
+        }
+
+        None
     }
+
+    fn load_from_path(configured_path: Option<&str>) -> Option<LoadedFont> {
+        let path = std::path::Path::new(configured_path?);
+        if !path.is_file() {
+            tracing::warn!("Configured font path does not exist: {}", path.display());
+            return None;
+        }
+
+        let data = match std::fs::read(path) {
+            Ok(data) => data,
+            Err(err) => {
+                tracing::warn!("Failed to read font file {}: {}", path.display(), err);
+                return None;
+            }
+        };
+
+        Some(LoadedFont {
+            id: format!("font-file:{}", path.to_string_lossy()),
+            data: Arc::new(egui::FontData::from_owned(data)),
+        })
+    }
+
+    fn find_by_name(&mut self, name: &str) -> Option<LoadedFont> {
+        let db = self.system_db();
+        let query = fontdb::Query {
+            families: &[fontdb::Family::Name(name)],
+            weight: fontdb::Weight::NORMAL,
+            stretch: fontdb::Stretch::Normal,
+            style: fontdb::Style::Normal,
+        };
+        let id = db.query(&query)?;
+        let face = db.face(id)?;
+        let data = match &face.source {
+            fontdb::Source::Binary(bin) => bin.as_ref().as_ref().to_vec(),
+            fontdb::Source::File(path) => std::fs::read(path).ok()?,
+            fontdb::Source::SharedFile(path, _) => std::fs::read(path).ok()?,
+        };
+        let family_name = face.families.first()?.0.clone();
+
+        Some(LoadedFont {
+            id: format!("font-family:{family_name}"),
+            data: Arc::new(egui::FontData::from_owned(data)),
+        })
+    }
+
+    fn system_db(&mut self) -> &mut fontdb::Database {
+        self.db.get_or_insert_with(|| {
+            let mut db = fontdb::Database::new();
+            db.load_system_fonts();
+            db
+        })
+    }
+}
+
+fn proportional_fallbacks() -> &'static [&'static str] {
+    #[cfg(target_os = "windows")]
+    {
+        &["Microsoft YaHei", "Segoe UI", "Arial"]
+    }
+    #[cfg(target_os = "macos")]
+    {
+        &["PingFang SC", "SF Pro Text", "Helvetica Neue"]
+    }
+    #[cfg(target_os = "linux")]
+    {
+        &[
+            "Noto Sans CJK SC",
+            "Noto Sans",
+            "DejaVu Sans",
+            "Liberation Sans",
+        ]
+    }
+}
+
+fn monospace_fallbacks() -> &'static [&'static str] {
+    #[cfg(target_os = "windows")]
+    {
+        &["Cascadia Mono", "Consolas", "Courier New"]
+    }
+    #[cfg(target_os = "macos")]
+    {
+        &["SF Mono", "Menlo", "Monaco"]
+    }
+    #[cfg(target_os = "linux")]
+    {
+        &[
+            "JetBrains Mono",
+            "DejaVu Sans Mono",
+            "Liberation Mono",
+            "Monospace",
+        ]
+    }
+}
+
+fn install_font_override(
+    fonts: &mut egui::FontDefinitions,
+    family: egui::FontFamily,
+    resolver: &mut FontResolver,
+    configured_name: Option<&str>,
+    configured_path: Option<&str>,
+    fallback_names: &[&str],
+) {
+    if let Some(font) = resolver.resolve(configured_name, configured_path, fallback_names) {
+        let family_fonts = fonts.families.entry(family).or_default();
+        if !family_fonts.iter().any(|existing| existing == &font.id) {
+            family_fonts.insert(0, font.id.clone());
+        }
+        fonts.font_data.insert(font.id, font.data);
+    }
+}
+
+fn setup_fonts(ctx: &egui::Context, config: &AppConfig) {
+    let mut fonts = egui::FontDefinitions::default();
+    let mut resolver = FontResolver::default();
+
+    install_font_override(
+        &mut fonts,
+        egui::FontFamily::Proportional,
+        &mut resolver,
+        config.ui_font_name.as_deref(),
+        config.ui_font_path.as_deref(),
+        proportional_fallbacks(),
+    );
+    install_font_override(
+        &mut fonts,
+        egui::FontFamily::Monospace,
+        &mut resolver,
+        config.code_font_name.as_deref(),
+        config.code_font_path.as_deref(),
+        monospace_fallbacks(),
+    );
 
     ctx.set_fonts(fonts);
 }
@@ -163,7 +272,7 @@ impl MdViewApp {
         let mut image_loader = ImageLoader::new(base_dir.clone());
         image_loader.set_context(cc.egui_ctx.clone());
 
-        setup_fonts(&cc.egui_ctx, config.font_name.as_deref());
+        setup_fonts(&cc.egui_ctx, &config);
 
         let font_size = config.font_size;
 
@@ -279,8 +388,13 @@ impl eframe::App for MdViewApp {
                 let need_save_pos =
                     self.config.window_x.is_none() || self.config.window_y.is_none();
                 let pos_changed = if let Some(rect) = viewport_rect {
-                    self.config.window_x.is_none_or(|x| (x - rect.min.x).abs() > 1.0)
-                        || self.config.window_y.is_none_or(|y| (y - rect.min.y).abs() > 1.0)
+                    self.config
+                        .window_x
+                        .is_none_or(|x| (x - rect.min.x).abs() > 1.0)
+                        || self
+                            .config
+                            .window_y
+                            .is_none_or(|y| (y - rect.min.y).abs() > 1.0)
                 } else {
                     false
                 };
@@ -306,7 +420,9 @@ impl eframe::App for MdViewApp {
         self.selector.clear_segments();
 
         // Debounce config saving (use Duration instead of f64)
-        if self.config_needs_save && self.last_save_time.elapsed() > std::time::Duration::from_secs(1) {
+        if self.config_needs_save
+            && self.last_save_time.elapsed() > std::time::Duration::from_secs(1)
+        {
             if let Err(e) = self.config.save() {
                 tracing::error!("Config save failed: {}", e);
             }

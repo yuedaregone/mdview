@@ -10,7 +10,14 @@ pub struct AppConfig {
     pub maximized: bool,
     pub theme_name: Option<String>,
     pub font_size: f32,
-    pub font_name: Option<String>,
+    #[serde(default, alias = "font_name")]
+    pub ui_font_name: Option<String>,
+    #[serde(default, alias = "font_path")]
+    pub ui_font_path: Option<String>,
+    #[serde(default)]
+    pub code_font_name: Option<String>,
+    #[serde(default)]
+    pub code_font_path: Option<String>,
     pub last_file: Option<String>,
 }
 
@@ -24,7 +31,10 @@ impl Default for AppConfig {
             maximized: false,
             theme_name: None,
             font_size: 16.0,
-            font_name: None,
+            ui_font_name: None,
+            ui_font_path: None,
+            code_font_name: None,
+            code_font_path: None,
             last_file: None,
         }
     }
