@@ -360,6 +360,8 @@ impl MdViewApp {
 
 impl eframe::App for MdViewApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        ctx.options_mut(|opts| opts.line_scroll_speed = 100.0);
+
         // Track maximized state FIRST
         let currently_maximized = ctx.input(|i| i.viewport().maximized).unwrap_or(false);
 
