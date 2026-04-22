@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Instant;
 
 use egui::*;
 use font_kit::family_name::FamilyName;
@@ -99,7 +100,7 @@ pub struct MdViewApp {
     /// Flag to indicate if config needs saving
     config_needs_save: bool,
     /// Last time config was saved
-    last_save_time: f64,
+    last_save_time: Instant,
     }
 impl MdViewApp {
     pub fn new(
@@ -136,21 +137,28 @@ impl MdViewApp {
 
         // Setup file watcher
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut debouncer = new_debouncer(
-            std::time::Duration::from_millis(200), // debounce changes
+        let mut debouncer = match new_debouncer(
+            std::time::Duration::from_millis(200),
             None,
             tx,
-        ).unwrap();
+        ) {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::warn!("Failed to create file watcher: {}", e);
+                panic!("File watcher creation failed: {}", e);
+            }
+        };
 
-        // Watch the base directory recursively if file_path is set, otherwise watch current dir
         if let Some(ref path) = file_path {
             if let Some(dir) = path.parent() {
-                debouncer.watcher().watch(dir, RecursiveMode::Recursive).unwrap();
-            } else {
-                debouncer.watcher().watch(&base_dir, RecursiveMode::Recursive).unwrap();
+                if debouncer.watcher().watch(dir, RecursiveMode::Recursive).is_err() {
+                    tracing::warn!("Failed to watch directory: {:?}", dir);
+                }
+            } else if debouncer.watcher().watch(&base_dir, RecursiveMode::Recursive).is_err() {
+                tracing::warn!("Failed to watch base directory");
             }
-        } else {
-            debouncer.watcher().watch(&base_dir, RecursiveMode::Recursive).unwrap();
+        } else if debouncer.watcher().watch(&base_dir, RecursiveMode::Recursive).is_err() {
+            tracing::warn!("Failed to watch base directory");
         }
 
 
@@ -172,7 +180,7 @@ impl MdViewApp {
             file_watcher: debouncer,
             file_events_rx: rx,
             config_needs_save: false,
-            last_save_time: 0.0,
+            last_save_time: Instant::now(),
         }
     }
 
@@ -185,19 +193,23 @@ impl MdViewApp {
             }
         }
 
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            self.error_msg = None;
-            self.doc = Some(self.ast_cache.get_or_parse(&path, &content));
-            if let Some(dir) = path.parent() {
-                self.image_loader.set_base_dir(dir.to_path_buf());
-                // Start watching new file's directory
-                let _ = self.file_watcher.watcher().watch(dir, RecursiveMode::Recursive);
+        match std::fs::read_to_string(&path) {
+            Ok(content) => {
+                self.error_msg = None;
+                self.doc = Some(self.ast_cache.get_or_parse(&path, &content));
+                if let Some(dir) = path.parent() {
+                    self.image_loader.set_base_dir(dir.to_path_buf());
+                    if self.file_watcher.watcher().watch(dir, RecursiveMode::Recursive).is_err() {
+                        tracing::warn!("Failed to watch directory: {:?}", dir);
+                    }
+                }
+                self.file_path = Some(path.clone());
+                self.config.last_file = Some(path.to_string_lossy().to_string());
+                self.save_config();
             }
-            self.file_path = Some(path.clone());
-            self.config.last_file = Some(path.to_string_lossy().to_string());
-            self.save_config(); // Debounced save
-        } else {
-            self.error_msg = Some(format!("无法打开文件"));
+            Err(e) => {
+                self.error_msg = Some(format!("无法打开文件: {}", e));
+            }
         }
     }
 
@@ -258,15 +270,8 @@ impl eframe::App for MdViewApp {
                 let need_save_pos =
                     self.config.window_x.is_none() || self.config.window_y.is_none();
                 let pos_changed = if let Some(rect) = viewport_rect {
-                    let has_changed = self
-                        .config
-                        .window_x
-                        .map_or(true, |x| (x - rect.min.x).abs() > 1.0)
-                        || self
-                            .config
-                            .window_y
-                            .map_or(true, |y| (y - rect.min.y).abs() > 1.0);
-                    has_changed
+                    self.config.window_x.is_none_or(|x| (x - rect.min.x).abs() > 1.0)
+                        || self.config.window_y.is_none_or(|y| (y - rect.min.y).abs() > 1.0)
                 } else {
                     false
                 };
@@ -291,12 +296,13 @@ impl eframe::App for MdViewApp {
         }
         self.selector.clear_segments();
 
-        // Debounce config saving
-        let current_time = ctx.input(|i| i.time);
-        if self.config_needs_save && current_time - self.last_save_time > 0.5 {
-            let _ = self.config.save();
+        // Debounce config saving (use Duration instead of f64)
+        if self.config_needs_save && self.last_save_time.elapsed() > std::time::Duration::from_secs(1) {
+            if let Err(e) = self.config.save() {
+                tracing::error!("Config save failed: {}", e);
+            }
             self.config_needs_save = false;
-            self.last_save_time = current_time;
+            self.last_save_time = Instant::now();
         }
 
         if !self.first_frame_shown {

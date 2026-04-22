@@ -188,7 +188,7 @@ fn render_heading(
     // Record text segment for selection
     let plain = children.iter().map(|n| n.plain_text()).collect::<String>();
     let rect = egui::Rect::from_min_max(before, egui::pos2(ui.max_rect().right(), after.y));
-    selector.add_segment(rect, plain, ui.id().with("heading_segment").with(block_index));
+    selector.add_segment(rect, plain);
     ui.add_space(4.0);
 }
 
@@ -215,7 +215,7 @@ fn render_paragraph(
     let after = ui.cursor().min;
     let plain = inlines.iter().map(|n| n.plain_text()).collect::<String>();
     let rect = egui::Rect::from_min_max(before, egui::pos2(ui.max_rect().right(), after.y));
-    selector.add_segment(rect, plain, ui.id().with("paragraph_segment").with(block_index));
+    selector.add_segment(rect, plain);
     ui.add_space(8.0);
 }
 
@@ -385,7 +385,7 @@ fn render_block_quote(
                 ui.horizontal(|ui| {
                     ui.add_space(16.0); // Space for left border + padding
                     ui.vertical(|ui| {
-                        for (_i, child) in children.iter().enumerate() {
+                        for child in children.iter() {
                             render_block(
                                 ui,
                                 child,
@@ -420,6 +420,7 @@ fn render_block_quote(
 
 
 
+#[allow(clippy::too_many_arguments)]
 fn render_ordered_list(
     ui: &mut Ui,
     start: u64,
@@ -428,7 +429,7 @@ fn render_ordered_list(
     font_size: f32,
     image_loader: &mut ImageLoader,
     selector: &mut TextSelector,
-    block_index: usize, // block_index of the list itself
+    block_index: usize,
 ) {
     for (i, item) in items.iter().enumerate() {
         let num = start + i as u64;
@@ -441,7 +442,7 @@ fn render_ordered_list(
             );
             ui.add_space(4.0);
             ui.vertical(|ui| {
-                for (_i, child) in item.children.iter().enumerate() {
+                for child in item.children.iter() {
                     render_block(
                         ui,
                         child,
@@ -466,13 +467,13 @@ fn render_unordered_list(
     selector: &mut TextSelector,
     block_index: usize, // Add block_index parameter
 ) {
-    for (_i, item) in items.iter().enumerate() {
+    for item in items.iter() {
         ui.horizontal(|ui| {
             ui.add_space(16.0);
             ui.label(RichText::new("•").size(font_size).color(theme.list_marker));
             ui.add_space(4.0);
             ui.vertical(|ui| {
-                for (_j, child) in item.children.iter().enumerate() {
+                for child in item.children.iter() {
                     render_block(
                         ui,
                         child,
@@ -637,6 +638,7 @@ fn render_html_block(ui: &mut Ui, html: &str, theme: &Theme, font_size: f32) {
 
 // ─── Footnote Definition ────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn render_footnote_def(
     ui: &mut Ui,
     label: &str,
@@ -645,7 +647,7 @@ fn render_footnote_def(
     font_size: f32,
     image_loader: &mut ImageLoader,
     selector: &mut TextSelector,
-    index: usize, // Add index parameter
+    index: usize,
 ) {
     ui.horizontal(|ui| {
         ui.label(
@@ -655,7 +657,7 @@ fn render_footnote_def(
         );
         ui.add_space(4.0);
         ui.vertical(|ui| {
-            for (_i, child) in content.iter().enumerate() {
+            for child in content.iter() {
                 render_block(
                     ui,
                     child,
@@ -680,7 +682,7 @@ fn render_inlines(
     font_size: f32,
     default_color: Color32,
     selector: &mut TextSelector,
-    id: egui::Id, // Changed from _block_index: usize
+    _id: egui::Id,
 ) {
     let max_width = ui.available_width();
     let (job, links) = inlines_to_rich_text(inlines, theme, font_size, default_color, max_width);
@@ -714,8 +716,8 @@ fn render_inlines(
             }
         }
 
-        // Click: open link on mouse down
-        if ui.input(|i| i.pointer.primary_down()) {
+        // Click: open link on click (not drag)
+        if label_response.clicked() {
             if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
                 if rect.contains(pos) {
                     let rel = pos - rect.min;
@@ -724,7 +726,9 @@ fn render_inlines(
                     for (url, range) in &links {
                         if range.contains(&char_idx) {
                             if url.starts_with('#') {
-                                // Anchor link - skip for now (no-op)
+                                // Anchor link - show info (egui doesn't have built-in anchor scrolling)
+                                let anchor = url.trim_start_matches('#');
+                                tracing::info!("Anchor link clicked: #{}", anchor);
                             } else if url.starts_with("file://")
                                 || url.starts_with("http://")
                                 || url.starts_with("https://")
@@ -741,7 +745,10 @@ fn render_inlines(
         }
     }
 
-    selector.add_segment(rect, plain_text, id);
+    // Handle text selection input
+    selector.handle_input(ui, &label_response);
+
+    selector.add_segment(rect, plain_text);
 }
 
 /// Convert inline nodes to a LayoutJob with proper inline formatting.
@@ -755,9 +762,11 @@ fn inlines_to_rich_text(
     default_color: Color32,
     max_width: f32,
 ) -> (egui::text::LayoutJob, Vec<(String, std::ops::Range<usize>)>) {
-    let mut job = egui::text::LayoutJob::default();
-    job.text = String::new();
-    job.wrap = egui::text::TextWrapping::wrap_at_width(max_width.max(100.0));
+    let mut job = egui::text::LayoutJob {
+        text: String::new(),
+        wrap: egui::text::TextWrapping::wrap_at_width(max_width.max(100.0)),
+        ..Default::default()
+    };
 
     let mut links = Vec::new();
     append_inlines_to_job(
@@ -799,6 +808,7 @@ impl FontStyle {
 }
 
 /// Append inline nodes to a LayoutJob with formatting state
+#[allow(clippy::too_many_arguments)]
 fn append_inlines_to_job(
     inlines: &[InlineNode],
     theme: &Theme,

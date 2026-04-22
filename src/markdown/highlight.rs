@@ -36,12 +36,7 @@ impl Highlighter {
             .syntax_set
             .find_syntax_by_token(lang)
             .or_else(|| self.syntax_set.find_syntax_by_extension(lang))
-            .or_else(|| Some(self.syntax_set.find_syntax_plain_text()));
-
-        let syntax = match syntax {
-            Some(s) => s,
-            None => return None,
-        };
+            .unwrap_or_else(|| self.syntax_set.find_syntax_plain_text());
 
         let theme = match self.theme_set.themes.get(theme_name) {
             Some(t) => t,

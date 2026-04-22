@@ -3,8 +3,6 @@
 //! Design: Convert comrak's Arena-based AST into a simple owned tree.
 //! We only extract node types needed for reading (no edit operations).
 
-#![allow(dead_code)]
-
 use std::fmt;
 
 use comrak::nodes::*;
@@ -68,11 +66,9 @@ pub enum InlineNode {
     Code(String),
     Link {
         url: String,
-        title: String,
         children: Vec<InlineNode>,
     },
     Image {
-        url: String,
         alt: String,
     },
     SoftBreak,
@@ -99,7 +95,6 @@ pub struct TaskItem {
 #[derive(Debug, Clone)]
 pub struct TableCell {
     pub content: Vec<InlineNode>,
-    pub align: Align,
 }
 
 /// Table column alignment
@@ -172,11 +167,7 @@ fn convert_node<'a>(node: &'a AstNode<'a>) -> Option<DocNode> {
             // Check if this is a task list
             let is_task = node.children().any(|child| {
                 let cdata = child.data.borrow();
-                if let NodeValue::TaskItem(_) = &cdata.value {
-                    true
-                } else {
-                    false
-                }
+                matches!(&cdata.value, NodeValue::TaskItem(_))
             });
 
             if is_task {
@@ -286,15 +277,13 @@ fn convert_inline<'a>(node: &'a AstNode<'a>) -> Option<InlineNode> {
             let children = convert_inlines(node);
             Some(InlineNode::Link {
                 url: link_node.url.clone(),
-                title: link_node.title.clone(),
                 children,
             })
         }
 
-        NodeValue::Image(image_node) => {
+        NodeValue::Image(_image_node) => {
             let alt = collect_text(node);
             Some(InlineNode::Image {
-                url: image_node.url.clone(),
                 alt,
             })
         }
@@ -361,8 +350,6 @@ impl InlineNode {
 /// Extract table data from a comrak table node.
 /// This is called from convert_node when we encounter a Table node.
 /// Since comrak represents tables as special list structures, we handle it separately.
-
-/// Convert comrak table children into our Table structure.
 /// Note: comrak's table representation uses specific node types:
 /// - NodeValue::Table(aligns) at the root
 /// - NodeValue::TableRow(header) for rows
@@ -381,20 +368,9 @@ pub fn convert_table<'a>(node: &'a AstNode<'a>, table: &NodeTable) -> Option<Doc
 
         let cells: Vec<TableCell> = row
             .children()
-            .enumerate()
-            .map(|(i, cell)| {
-                let align = aligns
-                    .get(i)
-                    .map(|a| match a {
-                        TableAlignment::None => Align::None,
-                        TableAlignment::Left => Align::Left,
-                        TableAlignment::Center => Align::Center,
-                        TableAlignment::Right => Align::Right,
-                    })
-                    .unwrap_or(Align::None);
-
+            .map(|cell| {
                 let content = convert_inlines(cell);
-                TableCell { content, align }
+                TableCell { content }
             })
             .collect();
 

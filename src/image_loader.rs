@@ -8,11 +8,14 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use egui::{Context, TextureOptions};
 
 use base64::Engine;
-use tracing;
+
+const MAX_CONCURRENT_LOADS: usize = 4;
 
 /// Messages sent from loader threads
 enum ImageMsg {
@@ -23,8 +26,8 @@ enum ImageMsg {
 /// State of an image in the cache
 pub enum ImageState {
     Loading,
-    Ready(egui::TextureId), // Changed from TextureHandle
-    Failed(String), // Add reason
+    Ready(egui::TextureId),
+    Failed(String),
 }
 
 /// Async image loader with caching
@@ -39,6 +42,8 @@ pub struct ImageLoader {
     tx: Sender<ImageMsg>,
     /// egui context for creating textures on the main thread
     ctx: Option<Context>,
+    /// Number of currently active loads
+    active_loads: Arc<AtomicUsize>,
 }
 
 impl ImageLoader {
@@ -50,6 +55,7 @@ impl ImageLoader {
             rx,
             tx,
             ctx: None,
+            active_loads: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -99,17 +105,15 @@ impl ImageLoader {
         let resolved = self.resolve_path(url);
 
         // If resolved differs from original, check cache under resolved key
-        if resolved != url {
-            if self.cache.contains_key(&resolved) {
-                // Already loading/loaded under resolved key — just alias the original key
-                let alias = match &self.cache[&resolved] {
-                    ImageState::Ready(texture_id) => ImageState::Ready(*texture_id),
-                    ImageState::Failed(reason) => ImageState::Failed(reason.clone()),
-                    ImageState::Loading => ImageState::Loading,
-                };
-                self.cache.insert(url.to_string(), alias);
-                return self.cache.get(url).unwrap();
-            }
+        if resolved != url && self.cache.contains_key(&resolved) {
+            // Already loading/loaded under resolved key — just alias the original key
+            let alias = match &self.cache[&resolved] {
+                ImageState::Ready(texture_id) => ImageState::Ready(*texture_id),
+                ImageState::Failed(reason) => ImageState::Failed(reason.clone()),
+                ImageState::Loading => ImageState::Loading,
+            };
+            self.cache.insert(url.to_string(), alias);
+            return self.cache.get(url).unwrap();
         }
 
         // Not cached anywhere — mark as loading and start async load
@@ -158,26 +162,40 @@ impl ImageLoader {
     }
 
     /// Start loading an image asynchronously
-    fn start_load(&self, key: String, resolved: String) {
+    fn start_load(&mut self, key: String, resolved: String) {
+        // Limit concurrent loads to prevent thread explosion
+        if self.active_loads.load(Ordering::SeqCst) >= MAX_CONCURRENT_LOADS {
+            tracing::warn!("Too many concurrent image loads, skipping: {}", key);
+            return;
+        }
+
+        if self.ctx.is_none() {
+            return;
+        }
+
         let tx = self.tx.clone();
-        let _ctx = match &self.ctx {
-            Some(c) => c.clone(),
-            None => return, // No context yet, can't load
-        };
+        let active = self.active_loads.clone();
 
         tracing::info!("Starting image load: {}", &resolved);
-        std::thread::spawn(move || match load_image_data(&resolved) {
-            Ok(image_data) => {
-                tracing::info!("Image loaded successfully: {}", key);
-                let color_image = egui::ColorImage::from_rgba_unmultiplied(
-                    [image_data.width as usize, image_data.height as usize],
-                    &image_data.rgba,
-                );
-                let _ = tx.send(ImageMsg::Ready { key, image: color_image });
-            }
-            Err(reason) => {
-                tracing::error!("Image load failed for {}: {}", key, reason);
-                let _ = tx.send(ImageMsg::Failed { key, reason });
+        active.fetch_add(1, Ordering::SeqCst);
+
+        std::thread::spawn(move || {
+            let result = load_image_data(&resolved);
+            active.fetch_sub(1, Ordering::SeqCst);
+
+            match result {
+                Ok(image_data) => {
+                    tracing::info!("Image loaded successfully: {}", key);
+                    let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                        [image_data.width as usize, image_data.height as usize],
+                        &image_data.rgba,
+                    );
+                    let _ = tx.send(ImageMsg::Ready { key, image: color_image });
+                }
+                Err(reason) => {
+                    tracing::error!("Image load failed for {}: {}", key, reason);
+                    let _ = tx.send(ImageMsg::Failed { key, reason });
+                }
             }
         });
     }

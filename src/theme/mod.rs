@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 
 /// Theme definition for the markdown reader
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[allow(dead_code)]
 pub struct Theme {
     pub name: String,
     pub is_dark: bool,

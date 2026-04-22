@@ -93,34 +93,57 @@ fn main() -> eframe::Result<()> {
 
 #[cfg(target_os = "windows")]
 fn register_file_association() {
-    let exe = std::env::current_exe().unwrap_or_default();
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Failed to get executable path: {}", e);
+            return;
+        }
+    };
     let exe_str = exe.to_string_lossy();
 
-    // Write to HKCU (no admin needed)
-    let commands = [
-        format!(
-            "reg add HKCU\\Software\\Classes\\.md /ve /d mdview.md /f"
-        ),
-        format!(
-            "reg add HKCU\\Software\\Classes\\mdview.md /ve /d \"Markdown File\" /f"
-        ),
-        format!(
-            "reg add HKCU\\Software\\Classes\\mdview.md\\shell\\open\\command /ve /d \"\\\"{}\\\" \\\"%%1\\\"\" /f",
-            exe_str
-        ),
-        format!(
-            "reg add HKCU\\Software\\Classes\\mdview.md\\DefaultIcon /ve /d \"\\\"{}\\\",0\" /f",
-            exe_str
-        ),
-    ];
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-    for cmd in &commands {
-        match std::process::Command::new("cmd").args(["/C", cmd]).output() {
-            Ok(_) => {}
-            Err(e) => eprintln!("Failed to register: {}", e),
+    let escaped_exe = exe_str.replace("'", "''");
+
+    let ps_script = format!(
+        r#"
+        $ErrorActionPreference = 'Stop'
+        try {{
+            $exe = '{}'
+            New-Item -Path 'HKCU:\Software\Classes\.md' -Force | Out-Null
+            Set-ItemProperty -Path 'HKCU:\Software\Classes\.md' -Name '(Default)' -Value 'mdview.md'
+            New-Item -Path 'HKCU:\Software\Classes\mdview.md' -Force | Out-Null
+            Set-ItemProperty -Path 'HKCU:\Software\Classes\mdview.md' -Name '(Default)' -Value 'Markdown File'
+            New-Item -Path 'HKCU:\Software\Classes\mdview.md\shell\open\command' -Force | Out-Null
+            Set-ItemProperty -Path 'HKCU:\Software\Classes\mdview.md\shell\open\command' -Name '(Default)' -Value "`"$exe`" `"%1`""
+            New-Item -Path 'HKCU:\Software\Classes\mdview.md\DefaultIcon' -Force | Out-Null
+            Set-ItemProperty -Path 'HKCU:\Software\Classes\mdview.md\DefaultIcon' -Name '(Default)' -Value "`"$exe`",0"
+            Write-Host 'File association registered successfully.'
+        }} catch {{
+            Write-Error "Failed to register: $_"
+            exit 1
+        }}
+        "#,
+        escaped_exe
+    );
+
+    match std::process::Command::new("powershell")
+        .args(["-ExecutionPolicy", "Bypass", "-NoProfile", "-Command", &ps_script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
+        Ok(output) => {
+            if output.status.success() {
+                println!("File association registered. .md files will now open with mdview.");
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                eprintln!("Failed to register: {}", stderr);
+            }
         }
+        Err(e) => eprintln!("Failed to execute PowerShell: {}", e),
     }
-    println!("File association registered. .md files will now open with mdview.");
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -130,13 +153,21 @@ fn register_file_association() {
 
 #[cfg(target_os = "windows")]
 fn unregister_file_association() {
-    let commands = [
-        "reg delete HKCU\\Software\\Classes\\.md /ve /f".to_string(),
-        "reg delete HKCU\\Software\\Classes\\mdview.md /f".to_string(),
-    ];
-    for cmd in &commands {
-        let _ = std::process::Command::new("cmd").args(["/C", cmd]).output();
-    }
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let ps_script = r#"
+        $ErrorActionPreference = 'SilentlyContinue'
+        Remove-Item -Path 'HKCU:\Software\Classes\.md' -Recurse -Force
+        Remove-Item -Path 'HKCU:\Software\Classes\mdview.md' -Recurse -Force
+        Write-Host 'File association unregistered.'
+    "#;
+
+    let _ = std::process::Command::new("powershell")
+        .args(["-ExecutionPolicy", "Bypass", "-NoProfile", "-Command", ps_script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+
     println!("File association unregistered.");
 }
 

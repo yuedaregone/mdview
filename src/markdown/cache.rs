@@ -70,18 +70,6 @@ impl AstCache {
 
         doc
     }
-
-    /// Invalidate a specific file's cache
-    #[allow(dead_code)]
-    pub fn invalidate(&mut self, path: &PathBuf) {
-        self.entries.remove(path);
-    }
-
-    /// Clear all cached entries
-    #[allow(dead_code)]
-    pub fn clear(&mut self) {
-        self.entries.clear();
-    }
 }
 
 impl Default for AstCache {
