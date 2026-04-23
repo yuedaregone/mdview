@@ -28,6 +28,9 @@ pub fn render_doc(
 ) {
     let block_count = doc.nodes.len();
     const BLOCK_SPACING: f32 = 4.0;
+    const TOP_PADDING: f32 = 16.0;
+    const BOTTOM_PADDING: f32 = 32.0;
+    const OVERSCAN: f32 = 200.0;
     let mut heights_changed = false;
 
     egui::ScrollArea::vertical()
@@ -39,73 +42,57 @@ pub fn render_doc(
                 let max_width = 800.0;
                 let content_width = total_width.min(max_width);
                 let margin = (total_width - content_width) / 2.0;
-                viewport.prepare_layout(block_count, content_width, font_size);
+                let layout_reset = viewport.prepare_layout(block_count, content_width, font_size);
+                if layout_reset {
+                    for (block, node) in viewport.blocks.iter_mut().zip(doc.nodes.iter()) {
+                        block.height = estimate_block_height(node, theme, font_size);
+                    }
+                }
+                viewport.rebuild_positions(TOP_PADDING, BLOCK_SPACING, BOTTOM_PADDING);
 
                 ui.add_space(margin);
 
                 ui.vertical(|ui| {
                     ui.set_max_width(content_width);
-                    ui.add_space(16.0);
+                    let visible_range =
+                        viewport.visible_range(vis_rect.min.y, vis_rect.max.y, OVERSCAN);
 
-                    let mut space_above = 0.0f32;
-                    let mut current_y = 16.0f32;
-                    let mut in_visible = false;
+                    if visible_range.is_empty() {
+                        ui.add_space(viewport.total_height());
+                        return;
+                    }
 
-                    for (i, node) in doc.nodes.iter().enumerate() {
-                        let cached_h = if let Some(block) = viewport.blocks.get_mut(i) {
+                    let leading_space = viewport.offset_before(visible_range.start);
+                    if leading_space > 0.0 {
+                        ui.add_space(leading_space);
+                    }
+
+                    for i in visible_range.clone() {
+                        let node = &doc.nodes[i];
+
+                        let before = ui.min_rect().max.y;
+
+                        render_block(ui, node, theme, font_size, i, image_loader, selector);
+
+                        ui.add_space(BLOCK_SPACING);
+                        let actual_h = (ui.min_rect().max.y - before - BLOCK_SPACING).max(0.0);
+                        let measured_h = actual_h.max(1.0);
+
+                        if let Some(block) = viewport.blocks.get_mut(i) {
+                            if !block.measured || (block.height - measured_h).abs() > 0.5 {
+                                block.height = measured_h;
+                                heights_changed = true;
+                            }
                             if !block.measured {
-                                block.height = estimate_block_height(node, theme, font_size);
+                                block.measured = true;
                             }
-                            block.height
-                        } else {
-                            estimate_block_height(node, theme, font_size)
-                        };
-                        let block_top = current_y;
-                        let block_bottom = block_top + cached_h;
-
-                        let is_visible = block_bottom >= vis_rect.min.y - 200.0
-                            && block_top <= vis_rect.max.y + 200.0;
-
-                        if is_visible {
-                            if space_above > 0.0 {
-                                ui.add_space(space_above);
-                                space_above = 0.0;
-                            }
-                            in_visible = true;
-
-                            let before = ui.min_rect().max.y;
-
-                            render_block(ui, node, theme, font_size, i, image_loader, selector);
-
-                            ui.add_space(BLOCK_SPACING);
-                            let actual_h = (ui.min_rect().max.y - before - BLOCK_SPACING).max(0.0);
-                            let measured_h = actual_h.max(1.0);
-
-                            if let Some(block) = viewport.blocks.get_mut(i) {
-                                if !block.measured || (block.height - measured_h).abs() > 0.5 {
-                                    block.height = measured_h;
-                                    heights_changed = true;
-                                }
-                                if !block.measured {
-                                    block.measured = true;
-                                }
-                            }
-
-                            current_y += measured_h + BLOCK_SPACING;
-                        } else if in_visible {
-                            let remaining: f32 = viewport.blocks[i..]
-                                .iter()
-                                .map(|block| block.height + BLOCK_SPACING)
-                                .sum();
-                            ui.add_space(remaining);
-                            break;
-                        } else {
-                            space_above += cached_h + BLOCK_SPACING;
-                            current_y += cached_h + BLOCK_SPACING;
                         }
                     }
 
-                    ui.add_space(32.0);
+                    let trailing_space = viewport.trailing_space_from(visible_range.end);
+                    if trailing_space > 0.0 {
+                        ui.add_space(trailing_space);
+                    }
                 });
 
                 ui.add_space(margin);
@@ -113,6 +100,7 @@ pub fn render_doc(
         });
 
     if heights_changed {
+        viewport.mark_layout_dirty();
         ui.ctx().request_repaint();
     }
 }

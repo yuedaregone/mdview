@@ -5,8 +5,10 @@
 use egui::*;
 
 use super::inlines::render_inlines;
-use crate::markdown::parser::{Align as ParserAlign, DocNode, InlineNode, ListItem, TableCell, TaskItem};
 use crate::image_loader::{ImageLoader, ImageState};
+use crate::markdown::parser::{
+    Align as ParserAlign, DocNode, InlineNode, ListItem, TableCell, TaskItem,
+};
 use crate::selection::TextSelector;
 use crate::theme::Theme;
 
@@ -198,86 +200,166 @@ fn render_table(
     font_size: f32,
     block_index: usize,
 ) {
-    let frame = Frame::NONE
-        .stroke(Stroke::new(1.0, theme.table_border))
-        .corner_radius(4.0)
-        .inner_margin(0)
-        .outer_margin(Margin::same(4));
+    let column_count = alignments
+        .len()
+        .max(headers.len())
+        .max(rows.iter().map(|row| row.len()).max().unwrap_or(0));
 
-    frame.show(ui, |ui| {
-        ScrollArea::horizontal()
+    Frame::NONE.outer_margin(Margin::same(4)).show(ui, |ui| {
+        if column_count == 0 {
+            return;
+        }
+
+        let cell_rects = ScrollArea::horizontal()
             .id_salt(format!("table_scroll_{}", block_index))
             .show(ui, |ui| {
-                let _num_cols = alignments.len().max(headers.len());
+                let min_table_width = (column_count as f32 * 120.0).max(ui.available_width());
+                ui.set_min_width(min_table_width);
+
+                let mut rects = Vec::with_capacity(rows.len() + 1);
 
                 Grid::new(ui.id().with("md_table").with(block_index))
-                    .striped(theme.table_stripe_bg.is_some())
-                    .min_col_width(60.0)
-                    .spacing([8.0, 4.0])
+                    .min_col_width(120.0)
+                    .spacing([0.0, 0.0])
                     .show(ui, |ui| {
-                        for (i, cell) in headers.iter().enumerate() {
-                            let align = alignments.get(i).copied().unwrap_or(ParserAlign::None);
-                            let cell_id = ui.id().with("table_cell_h").with(block_index).with(i);
-                            render_table_cell(ui, cell, align, theme, font_size, true, cell_id);
+                        let mut header_rects = Vec::with_capacity(column_count);
+                        for col_idx in 0..column_count {
+                            let align = alignments
+                                .get(col_idx)
+                                .copied()
+                                .unwrap_or(ParserAlign::None);
+                            let cell_id =
+                                ui.id().with("table_cell_h").with(block_index).with(col_idx);
+                            let rect = render_table_cell(
+                                ui,
+                                headers.get(col_idx),
+                                align,
+                                theme,
+                                font_size,
+                                theme.table_header_bg,
+                                cell_id,
+                            );
+                            header_rects.push(rect);
                         }
                         ui.end_row();
+                        rects.push(header_rects);
 
                         for (row_idx, row) in rows.iter().enumerate() {
-                            for (col_idx, cell) in row.iter().enumerate() {
-                                let align = alignments.get(col_idx).copied().unwrap_or(ParserAlign::None);
+                            let row_bg = theme
+                                .table_stripe_bg
+                                .filter(|_| row_idx % 2 == 0)
+                                .unwrap_or(Color32::TRANSPARENT);
+                            let mut row_rects = Vec::with_capacity(column_count);
+
+                            for col_idx in 0..column_count {
+                                let align = alignments
+                                    .get(col_idx)
+                                    .copied()
+                                    .unwrap_or(ParserAlign::None);
                                 let cell_id = ui
                                     .id()
                                     .with("table_cell_d")
                                     .with(block_index)
                                     .with(row_idx)
                                     .with(col_idx);
-                                render_table_cell(
-                                    ui, cell, align, theme, font_size, false, cell_id,
+                                let rect = render_table_cell(
+                                    ui,
+                                    row.get(col_idx),
+                                    align,
+                                    theme,
+                                    font_size,
+                                    row_bg,
+                                    cell_id,
                                 );
+                                row_rects.push(rect);
                             }
                             ui.end_row();
+                            rects.push(row_rects);
                         }
                     });
-            });
+
+                rects
+            })
+            .inner;
+
+        paint_table_grid(ui, &cell_rects, theme.table_border);
     });
 }
 
 /// 渲染表格单元格
 fn render_table_cell(
     ui: &mut Ui,
-    cell: &TableCell,
+    cell: Option<&TableCell>,
     align: ParserAlign,
     theme: &Theme,
     font_size: f32,
-    is_header: bool,
+    background: Color32,
     cell_id: egui::Id,
-) {
-    let layout = match align {
-        ParserAlign::Center => Layout::centered_and_justified(egui::Direction::TopDown),
-        ParserAlign::Right => Layout::right_to_left(egui::Align::Center),
-        _ => Layout::left_to_right(egui::Align::Center),
+) -> Rect {
+    let mut selector = TextSelector::new();
+
+    Frame::NONE
+        .inner_margin(Margin::symmetric(10, 8))
+        .fill(background)
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width().max(0.0));
+            ui.with_layout(table_cell_layout(align), |ui| {
+                if let Some(cell) = cell {
+                    render_inlines(
+                        ui,
+                        &cell.content,
+                        theme,
+                        font_size,
+                        theme.foreground,
+                        &mut selector,
+                        cell_id,
+                    );
+                } else {
+                    ui.add_space(font_size);
+                }
+            });
+        })
+        .response
+        .rect
+}
+
+fn table_cell_layout(align: ParserAlign) -> Layout {
+    Layout::top_down(match align {
+        ParserAlign::Center => egui::Align::Center,
+        ParserAlign::Right => egui::Align::Max,
+        ParserAlign::Left | ParserAlign::None => egui::Align::Min,
+    })
+}
+
+fn paint_table_grid(ui: &Ui, cell_rects: &[Vec<Rect>], border: Color32) {
+    let Some(first_row) = cell_rects.first() else {
+        return;
+    };
+    let Some(first_cell) = first_row.first() else {
+        return;
+    };
+    let Some(last_row) = cell_rects.last() else {
+        return;
+    };
+    let Some(last_cell) = last_row.last() else {
+        return;
     };
 
-    ui.with_layout(layout, |ui| {
-        Frame::NONE
-            .inner_margin(Margin::same(8))
-            .fill(if is_header {
-                theme.table_header_bg
-            } else {
-                Color32::TRANSPARENT
-            })
-            .show(ui, |ui| {
-                render_inlines(
-                    ui,
-                    &cell.content,
-                    theme,
-                    font_size,
-                    theme.foreground,
-                    &mut TextSelector::new(),
-                    cell_id,
-                );
-            });
-    });
+    let stroke = Stroke::new(1.0, border);
+    let table_rect = Rect::from_min_max(first_cell.min, last_cell.max);
+    let painter = ui.painter();
+
+    painter.rect_stroke(table_rect, 4.0, stroke, StrokeKind::Inside);
+
+    for row in cell_rects.iter().take(cell_rects.len().saturating_sub(1)) {
+        if let Some(cell) = row.first() {
+            painter.hline(table_rect.x_range(), cell.bottom(), stroke);
+        }
+    }
+
+    for cell in first_row.iter().take(first_row.len().saturating_sub(1)) {
+        painter.vline(cell.right(), table_rect.y_range(), stroke);
+    }
 }
 
 /// 渲染引用

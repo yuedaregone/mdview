@@ -219,11 +219,7 @@ impl eframe::App for MdViewApp {
             .show(ctx, |ui| {
                 // 显示右键主菜单
                 let menu_id = egui::Id::new("mdview_context_menu");
-                crate::context_menu::show_context_menu(
-                    ui,
-                    &mut self.selector,
-                    &self.file_path,
-                );
+                crate::context_menu::show_context_menu(ui, &mut self.selector, &self.file_path);
 
                 // 显示右键子菜单
                 crate::context_menu::show_submenus(

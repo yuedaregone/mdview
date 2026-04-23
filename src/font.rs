@@ -141,13 +141,35 @@ fn install_font_override(
     configured_name: Option<&str>,
     configured_path: Option<&str>,
     fallback_names: &[&str],
-) {
+) -> Option<String> {
     if let Some(font) = resolver.resolve(configured_name, configured_path, fallback_names) {
+        let font_id = font.id.clone();
         let family_fonts = fonts.families.entry(family).or_default();
-        if !family_fonts.iter().any(|existing| existing == &font.id) {
-            family_fonts.insert(0, font.id.clone());
+        if !family_fonts.iter().any(|existing| existing == &font_id) {
+            family_fonts.insert(0, font_id.clone());
         }
         fonts.font_data.insert(font.id, font.data);
+        Some(font_id)
+    } else {
+        None
+    }
+}
+
+fn append_family_fallback(
+    fonts: &mut egui::FontDefinitions,
+    family: egui::FontFamily,
+    fallback_font_id: Option<&str>,
+) {
+    let Some(fallback_font_id) = fallback_font_id else {
+        return;
+    };
+
+    let family_fonts = fonts.families.entry(family).or_default();
+    if !family_fonts
+        .iter()
+        .any(|existing| existing == fallback_font_id)
+    {
+        family_fonts.push(fallback_font_id.to_owned());
     }
 }
 
@@ -156,7 +178,7 @@ pub fn setup_fonts(ctx: &egui::Context, config: &crate::config::AppConfig) {
     let mut fonts = egui::FontDefinitions::default();
     let mut resolver = FontResolver::default();
 
-    install_font_override(
+    let proportional_font = install_font_override(
         &mut fonts,
         egui::FontFamily::Proportional,
         &mut resolver,
@@ -164,13 +186,21 @@ pub fn setup_fonts(ctx: &egui::Context, config: &crate::config::AppConfig) {
         config.ui_font_path.as_deref(),
         proportional_fallbacks(),
     );
-    install_font_override(
+    let _monospace_font = install_font_override(
         &mut fonts,
         egui::FontFamily::Monospace,
         &mut resolver,
         config.code_font_name.as_deref(),
         config.code_font_path.as_deref(),
         monospace_fallbacks(),
+    );
+
+    // Let code blocks keep their monospace primary font, but fall back to the UI
+    // font family for CJK glyphs that many monospace fonts do not provide.
+    append_family_fallback(
+        &mut fonts,
+        egui::FontFamily::Monospace,
+        proportional_font.as_deref(),
     );
 
     ctx.set_fonts(fonts);

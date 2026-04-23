@@ -42,12 +42,8 @@ pub fn handle_window_state(
 
             let need_save_pos = config.window_x.is_none() || config.window_y.is_none();
             let pos_changed = if let Some(rect) = viewport_rect {
-                config
-                    .window_x
-                    .is_none_or(|x| (x - rect.min.x).abs() > 1.0)
-                    || config
-                        .window_y
-                        .is_none_or(|y| (y - rect.min.y).abs() > 1.0)
+                config.window_x.is_none_or(|x| (x - rect.min.x).abs() > 1.0)
+                    || config.window_y.is_none_or(|y| (y - rect.min.y).abs() > 1.0)
             } else {
                 false
             };
@@ -157,9 +153,7 @@ pub fn flush_config_save(
     config_needs_save: &mut bool,
     last_save_time: &mut Instant,
 ) {
-    if *config_needs_save
-        && last_save_time.elapsed() > std::time::Duration::from_secs(1)
-    {
+    if *config_needs_save && last_save_time.elapsed() > std::time::Duration::from_secs(1) {
         if let Err(e) = config.save() {
             tracing::error!("Config save failed: {}", e);
         }
