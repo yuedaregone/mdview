@@ -4,7 +4,7 @@
 
 use egui::*;
 
-use super::inlines::render_inlines;
+use super::inlines::{inlines_to_rich_text, render_inlines};
 use crate::image_loader::{ImageLoader, ImageState};
 use crate::markdown::parser::{
     Align as ParserAlign, DocNode, InlineNode, ListItem, TableCell, TaskItem,
@@ -200,10 +200,24 @@ fn render_table(
     font_size: f32,
     block_index: usize,
 ) {
+    const CELL_PADDING_X: f32 = 10.0;
+    const CELL_PADDING_Y: f32 = 8.0;
+
     let column_count = alignments
         .len()
         .max(headers.len())
         .max(rows.iter().map(|row| row.len()).max().unwrap_or(0));
+    let column_widths = estimate_table_column_widths(headers, rows, column_count, font_size);
+    let row_heights = measure_table_row_heights(
+        ui,
+        headers,
+        rows,
+        &column_widths,
+        theme,
+        font_size,
+        CELL_PADDING_X,
+        CELL_PADDING_Y,
+    );
 
     Frame::NONE.outer_margin(Margin::same(4)).show(ui, |ui| {
         if column_count == 0 {
@@ -213,7 +227,7 @@ fn render_table(
         let cell_rects = ScrollArea::horizontal()
             .id_salt(format!("table_scroll_{}", block_index))
             .show(ui, |ui| {
-                let min_table_width = (column_count as f32 * 120.0).max(ui.available_width());
+                let min_table_width = column_widths.iter().sum::<f32>().max(ui.available_width());
                 ui.set_min_width(min_table_width);
 
                 let mut rects = Vec::with_capacity(rows.len() + 1);
@@ -236,6 +250,10 @@ fn render_table(
                                 align,
                                 theme,
                                 font_size,
+                                column_widths[col_idx],
+                                row_heights[0],
+                                CELL_PADDING_X,
+                                CELL_PADDING_Y,
                                 theme.table_header_bg,
                                 cell_id,
                             );
@@ -268,6 +286,10 @@ fn render_table(
                                     align,
                                     theme,
                                     font_size,
+                                    column_widths[col_idx],
+                                    row_heights[row_idx + 1],
+                                    CELL_PADDING_X,
+                                    CELL_PADDING_Y,
                                     row_bg,
                                     cell_id,
                                 );
@@ -293,34 +315,50 @@ fn render_table_cell(
     align: ParserAlign,
     theme: &Theme,
     font_size: f32,
+    min_width: f32,
+    target_height: f32,
+    padding_x: f32,
+    padding_y: f32,
     background: Color32,
     cell_id: egui::Id,
 ) -> Rect {
     let mut selector = TextSelector::new();
+    let (cell_rect, _) = ui.allocate_exact_size(
+        vec2(min_width.max(1.0), target_height.max(font_size)),
+        Sense::hover(),
+    );
 
-    Frame::NONE
-        .inner_margin(Margin::symmetric(10, 8))
-        .fill(background)
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width().max(0.0));
-            ui.with_layout(table_cell_layout(align), |ui| {
-                if let Some(cell) = cell {
-                    render_inlines(
-                        ui,
-                        &cell.content,
-                        theme,
-                        font_size,
-                        theme.foreground,
-                        &mut selector,
-                        cell_id,
-                    );
-                } else {
-                    ui.add_space(font_size);
-                }
-            });
-        })
-        .response
-        .rect
+    if background != Color32::TRANSPARENT {
+        ui.painter().rect_filled(cell_rect, 0.0, background);
+    }
+
+    let inner_rect = Rect::from_min_max(
+        Pos2::new(cell_rect.left() + padding_x, cell_rect.top() + padding_y),
+        Pos2::new(
+            cell_rect.right() - padding_x,
+            cell_rect.bottom() - padding_y,
+        ),
+    );
+
+    let mut child_ui = ui.new_child(
+        UiBuilder::new()
+            .max_rect(inner_rect)
+            .layout(table_cell_layout(align)),
+    );
+
+    if let Some(cell) = cell {
+        render_inlines(
+            &mut child_ui,
+            &cell.content,
+            theme,
+            font_size,
+            theme.foreground,
+            &mut selector,
+            cell_id,
+        );
+    }
+
+    cell_rect
 }
 
 fn table_cell_layout(align: ParserAlign) -> Layout {
@@ -335,9 +373,9 @@ fn paint_table_grid(ui: &Ui, cell_rects: &[Vec<Rect>], border: Color32) {
     let Some(first_row) = cell_rects.first() else {
         return;
     };
-    let Some(first_cell) = first_row.first() else {
+    if first_row.is_empty() {
         return;
-    };
+    }
     let Some(last_row) = cell_rects.last() else {
         return;
     };
@@ -346,20 +384,175 @@ fn paint_table_grid(ui: &Ui, cell_rects: &[Vec<Rect>], border: Color32) {
     };
 
     let stroke = Stroke::new(1.0, border);
-    let table_rect = Rect::from_min_max(first_cell.min, last_cell.max);
+    let row_bounds: Vec<(f32, f32)> = cell_rects
+        .iter()
+        .map(|row| {
+            row.iter()
+                .fold((f32::INFINITY, f32::NEG_INFINITY), |(top, bottom), rect| {
+                    (top.min(rect.top()), bottom.max(rect.bottom()))
+                })
+        })
+        .collect();
+    let col_bounds: Vec<(f32, f32)> = (0..first_row.len())
+        .map(|col| {
+            cell_rects
+                .iter()
+                .filter_map(|row| row.get(col))
+                .fold((f32::INFINITY, f32::NEG_INFINITY), |(left, right), rect| {
+                    (left.min(rect.left()), right.max(rect.right()))
+                })
+        })
+        .collect();
+
+    let table_rect = Rect::from_min_max(
+        Pos2::new(col_bounds[0].0, row_bounds[0].0),
+        Pos2::new(
+            col_bounds
+                .last()
+                .map(|(_, right)| *right)
+                .unwrap_or(last_cell.right()),
+            row_bounds
+                .last()
+                .map(|(_, bottom)| *bottom)
+                .unwrap_or(last_cell.bottom()),
+        ),
+    );
     let painter = ui.painter();
 
     painter.rect_stroke(table_rect, 4.0, stroke, StrokeKind::Inside);
 
-    for row in cell_rects.iter().take(cell_rects.len().saturating_sub(1)) {
-        if let Some(cell) = row.first() {
-            painter.hline(table_rect.x_range(), cell.bottom(), stroke);
-        }
+    for (_, bottom) in row_bounds.iter().take(row_bounds.len().saturating_sub(1)) {
+        painter.hline(table_rect.x_range(), *bottom, stroke);
     }
 
-    for cell in first_row.iter().take(first_row.len().saturating_sub(1)) {
-        painter.vline(cell.right(), table_rect.y_range(), stroke);
+    for (_, right) in col_bounds.iter().take(col_bounds.len().saturating_sub(1)) {
+        painter.vline(*right, table_rect.y_range(), stroke);
     }
+}
+
+fn measure_table_row_heights(
+    ui: &Ui,
+    headers: &[TableCell],
+    rows: &[Vec<TableCell>],
+    column_widths: &[f32],
+    theme: &Theme,
+    font_size: f32,
+    padding_x: f32,
+    padding_y: f32,
+) -> Vec<f32> {
+    let mut heights = Vec::with_capacity(rows.len() + 1);
+    let content_widths: Vec<f32> = column_widths
+        .iter()
+        .map(|width| (width - padding_x * 2.0).max(1.0))
+        .collect();
+
+    let header_height = (0..column_widths.len())
+        .map(|col_idx| {
+            measure_table_cell_height(
+                ui,
+                headers.get(col_idx),
+                content_widths[col_idx],
+                theme,
+                font_size,
+                padding_y,
+            )
+        })
+        .fold(0.0, f32::max);
+    heights.push(header_height);
+
+    for row in rows {
+        let row_height = (0..column_widths.len())
+            .map(|col_idx| {
+                measure_table_cell_height(
+                    ui,
+                    row.get(col_idx),
+                    content_widths[col_idx],
+                    theme,
+                    font_size,
+                    padding_y,
+                )
+            })
+            .fold(0.0, f32::max);
+        heights.push(row_height);
+    }
+
+    heights
+}
+
+fn measure_table_cell_height(
+    ui: &Ui,
+    cell: Option<&TableCell>,
+    content_width: f32,
+    theme: &Theme,
+    font_size: f32,
+    padding_y: f32,
+) -> f32 {
+    let Some(cell) = cell else {
+        return font_size + padding_y * 2.0;
+    };
+
+    let (job, _) = inlines_to_rich_text(
+        &cell.content,
+        theme,
+        font_size,
+        theme.foreground,
+        content_width,
+    );
+    let galley = ui.fonts(|fonts| fonts.layout_job(job));
+
+    galley.size().y.max(font_size) + padding_y * 2.0
+}
+
+fn estimate_table_column_widths(
+    headers: &[TableCell],
+    rows: &[Vec<TableCell>],
+    column_count: usize,
+    font_size: f32,
+) -> Vec<f32> {
+    let mut widths = vec![140.0; column_count];
+
+    for col_idx in 0..column_count {
+        let header_width = headers
+            .get(col_idx)
+            .map(|cell| estimate_cell_width(cell, font_size, true))
+            .unwrap_or(0.0);
+        let row_width = rows
+            .iter()
+            .filter_map(|row| row.get(col_idx))
+            .map(|cell| estimate_cell_width(cell, font_size, false))
+            .fold(0.0, f32::max);
+
+        widths[col_idx] = header_width.max(row_width).clamp(140.0, 320.0);
+    }
+
+    widths
+}
+
+fn estimate_cell_width(cell: &TableCell, font_size: f32, is_header: bool) -> f32 {
+    let text_units: f32 = cell
+        .content
+        .iter()
+        .map(|inline| inline.plain_text())
+        .map(|text| estimate_text_units(&text))
+        .sum();
+    let weight = if is_header { 0.72 } else { 0.68 };
+
+    text_units * font_size * weight + 20.0
+}
+
+fn estimate_text_units(text: &str) -> f32 {
+    text.chars()
+        .map(|ch| match ch {
+            '\n' | '\r' => 0.0,
+            '\t' => 4.0,
+            c if c.is_ascii_uppercase() => 1.1,
+            c if c.is_ascii_lowercase() || c.is_ascii_digit() => 0.9,
+            c if c.is_ascii_punctuation() => 0.7,
+            c if c.is_ascii_whitespace() => 0.45,
+            _ => 1.8,
+        })
+        .sum::<f32>()
+        .max(1.0)
 }
 
 /// 渲染引用

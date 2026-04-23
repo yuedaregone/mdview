@@ -109,7 +109,11 @@ pub fn inlines_to_rich_text(
 ) -> (egui::text::LayoutJob, Vec<(String, std::ops::Range<usize>)>) {
     let mut job = egui::text::LayoutJob {
         text: String::new(),
-        wrap: egui::text::TextWrapping::wrap_at_width(max_width.max(100.0)),
+        wrap: if max_width.is_finite() {
+            egui::text::TextWrapping::wrap_at_width(max_width.max(100.0))
+        } else {
+            egui::text::TextWrapping::no_max_width()
+        },
         ..Default::default()
     };
 
