@@ -16,16 +16,18 @@ pub fn render_inlines(
     font_size: f32,
     default_color: Color32,
     selector: &mut TextSelector,
+    separator_before: &'static str,
     _id: egui::Id,
 ) {
     let max_width = ui.available_width();
     let (job, links) = inlines_to_rich_text(inlines, theme, font_size, default_color, max_width);
     let plain_text = job.text.clone();
     let has_links = !links.is_empty();
+    let galley = ui.fonts(|f| f.layout_job(job.clone()));
 
     let job_for_hit_test = if has_links { Some(job.clone()) } else { None };
 
-    let label_response = ui.label(job);
+    let label_response = ui.add(Label::new(job).sense(Sense::click_and_drag()));
     let rect = label_response.rect;
 
     // 链接点击检测
@@ -35,7 +37,7 @@ pub fn render_inlines(
 
     // 处理文本选择
     selector.handle_input(ui, &label_response);
-    selector.add_segment(rect, plain_text);
+    selector.add_segment(rect, plain_text, galley, separator_before);
 }
 
 /// 处理链接交互（悬停和点击）
@@ -211,16 +213,6 @@ fn append_inlines_to_job(
                 if !url.is_empty() {
                     links.push((url.clone(), link_start..link_end));
                 }
-            }
-            InlineNode::Image { alt, .. } => {
-                push_section(
-                    job,
-                    &format!("🖼 {}", alt),
-                    font_size * 0.9,
-                    theme.muted_text(),
-                    FontStyle::NORMAL,
-                    false,
-                );
             }
             InlineNode::SoftBreak => {
                 push_section(job, " ", font_size, color, style, is_in_link);

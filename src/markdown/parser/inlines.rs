@@ -38,10 +38,7 @@ fn convert_inline<'a>(node: &'a AstNode<'a>) -> Option<InlineNode> {
                 children,
             })
         }
-        NodeValue::Image(_image_node) => {
-            let alt = collect_text(node);
-            Some(InlineNode::Image { alt })
-        }
+        NodeValue::Image(_image_node) => Some(InlineNode::Text(collect_text(node))),
         NodeValue::FootnoteReference(fn_ref) => Some(InlineNode::FootnoteRef(fn_ref.name.clone())),
         NodeValue::Superscript => {
             let text = collect_text(node);

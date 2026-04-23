@@ -11,7 +11,6 @@ mod config;
 mod context_menu;
 mod file_watcher;
 mod font;
-mod image_loader;
 mod markdown;
 mod selection;
 mod theme;

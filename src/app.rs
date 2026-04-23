@@ -7,7 +7,6 @@ use egui::*;
 use crate::config::AppConfig;
 use crate::file_watcher::SimpleFileWatcher;
 use crate::font;
-use crate::image_loader::ImageLoader;
 use crate::markdown::cache::AstCache;
 use crate::markdown::parser::MarkdownDoc;
 use crate::selection::TextSelector;
@@ -29,8 +28,6 @@ pub struct MdViewApp {
     first_frame_shown: bool,
     /// 文本选择状态
     selector: TextSelector,
-    /// 异步图片加载器
-    image_loader: ImageLoader,
     /// 视口裁剪状态
     viewport: ViewportState,
     /// AST 缓存（避免重复解析）
@@ -56,15 +53,6 @@ impl MdViewApp {
         file_path: Option<PathBuf>,
     ) -> Self {
         let config = AppConfig::load();
-
-        let base_dir = file_path
-            .as_ref()
-            .and_then(|p| p.parent())
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-
-        let mut image_loader = ImageLoader::new(base_dir.clone());
-        image_loader.set_context(cc.egui_ctx.clone());
 
         // 设置字体
         font::setup_fonts(&cc.egui_ctx, &config);
@@ -94,7 +82,6 @@ impl MdViewApp {
             font_size,
             first_frame_shown: false,
             selector: TextSelector::new(),
-            image_loader,
             viewport: ViewportState::new(0),
             ast_cache: AstCache::default(),
             error_msg: None,
@@ -113,9 +100,6 @@ impl MdViewApp {
                 self.error_msg = None;
                 self.doc = Some(self.ast_cache.get_or_parse(&path, &content));
                 self.viewport.reset(0);
-                if let Some(dir) = path.parent() {
-                    self.image_loader.set_base_dir(dir.to_path_buf());
-                }
                 self.file_path = Some(path.clone());
                 self.file_watcher = SimpleFileWatcher::new(Some(path.clone()));
                 self.config.last_file = Some(path.to_string_lossy().to_string());
@@ -169,27 +153,22 @@ impl eframe::App for MdViewApp {
         // 2. 应用主题
         self.apply_theme(ctx);
 
-        // 3. 轮询图片加载
-        if self.image_loader.poll() {
-            ctx.request_repaint();
-        }
-
-        // 4. 清除选择器 segments
+        // 3. 清除选择器 segments
         self.selector.clear_segments();
 
-        // 5. 防抖动保存配置
+        // 4. 防抖动保存配置
         update::flush_config_save(
             &self.config,
             &mut self.config_needs_save,
             &mut self.last_save_time,
         );
 
-        // 6. 标记首帧已显示
+        // 5. 标记首帧已显示
         if !self.first_frame_shown {
             self.first_frame_shown = true;
         }
 
-        // 7. 处理快捷键
+        // 6. 处理快捷键
         update::handle_keyboard_shortcuts(
             ctx,
             &mut self.font_size,
@@ -200,7 +179,7 @@ impl eframe::App for MdViewApp {
             &self.file_path,
         );
 
-        // 8. 处理文件监视器
+        // 7. 处理文件监视器
         if update::check_file_watcher(&mut self.file_watcher) {
             if let Some(path) = self.file_path.clone() {
                 self.load_file(path);
@@ -208,12 +187,12 @@ impl eframe::App for MdViewApp {
             }
         }
 
-        // 9. 处理拖拽文件
+        // 8. 处理拖拽文件
         if let Some(path) = update::check_dropped_files(ctx) {
             self.load_file(path);
         }
 
-        // 10. 渲染 UI
+        // 9. 渲染 UI
         CentralPanel::default()
             .frame(Frame::NONE.fill(self.theme.background))
             .show(ctx, |ui| {
@@ -241,7 +220,6 @@ impl eframe::App for MdViewApp {
                         doc,
                         &self.theme,
                         self.font_size,
-                        &mut self.image_loader,
                         &mut self.selector,
                         &mut self.viewport,
                     );

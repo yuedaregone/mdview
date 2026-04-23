@@ -101,16 +101,17 @@ fn convert_node<'a>(node: &'a AstNode<'a>) -> Option<DocNode> {
 
         NodeValue::ThematicBreak => Some(DocNode::ThematicBreak),
 
-        NodeValue::Image(image_node) => {
+        NodeValue::Image(_image_node) => {
             let alt = comrak::nodes::AstNode::children(node)
                 .map(collect_text_for_image)
                 .collect::<Vec<_>>()
                 .join("");
-            Some(DocNode::Image {
-                url: image_node.url.clone(),
-                alt,
-                title: image_node.title.clone(),
-            })
+
+            if alt.is_empty() {
+                None
+            } else {
+                Some(DocNode::Paragraph(vec![InlineNode::Text(alt)]))
+            }
         }
 
         NodeValue::HtmlBlock(html_node) => Some(DocNode::HtmlBlock(html_node.literal.clone())),
@@ -126,7 +127,7 @@ fn convert_node<'a>(node: &'a AstNode<'a>) -> Option<DocNode> {
     }
 }
 
-/// 收集图片的 alt 文本
+/// 收集节点中的纯文本
 fn collect_text_for_image<'a>(node: &'a AstNode<'a>) -> String {
     let data = node.data.borrow();
     match &data.value {

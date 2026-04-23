@@ -51,7 +51,6 @@ pub fn estimate_block_height(node: &DocNode, theme: &Theme, font_size: f32) -> f
             .sum::<f32>()
             .max(font_size * 1.5 + 8.0),
         DocNode::ThematicBreak => 24.0,
-        DocNode::Image { .. } => 220.0,
         DocNode::HtmlBlock(html) => {
             let lines = html.lines().count().max(1).min(24) as f32;
             lines * font_size * 1.2 + 24.0
@@ -98,7 +97,6 @@ fn inline_len(inline: &InlineNode) -> usize {
         | InlineNode::Italic(children)
         | InlineNode::Strikethrough(children) => inline_text_len(children),
         InlineNode::Link { children, .. } => inline_text_len(children),
-        InlineNode::Image { alt, .. } => alt.chars().count().max(8),
         InlineNode::SoftBreak | InlineNode::HardBreak => 1,
         InlineNode::FootnoteRef(label) => label.chars().count() + 3,
     }

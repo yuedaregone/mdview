@@ -36,11 +36,6 @@ pub enum DocNode {
         items: Vec<TaskItem>,
     },
     ThematicBreak,
-    Image {
-        url: String,
-        alt: String,
-        title: String,
-    },
     HtmlBlock(String),
     FootnoteDef {
         label: String,
@@ -59,9 +54,6 @@ pub enum InlineNode {
     Link {
         url: String,
         children: Vec<InlineNode>,
-    },
-    Image {
-        alt: String,
     },
     SoftBreak,
     HardBreak,
@@ -121,7 +113,6 @@ impl InlineNode {
             }
             InlineNode::Code(s) => s.clone(),
             InlineNode::Link { children, .. } => children.iter().map(|n| n.plain_text()).collect(),
-            InlineNode::Image { alt, .. } => alt.clone(),
             InlineNode::SoftBreak => " ".to_string(),
             InlineNode::HardBreak => "\n".to_string(),
             InlineNode::FootnoteRef(label) => format!("[^{}]", label),

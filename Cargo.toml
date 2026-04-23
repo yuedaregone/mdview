@@ -10,11 +10,8 @@ eframe = { version = "0.31", default-features = false, features = ["glow", "pers
 egui = "0.31"
 comrak = { version = "0.39", default-features = false, features = ["shortcodes"] }
 syntect = { version = "5.2", default-features = false, features = ["default-fancy"] }
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 open = "5"
 arboard = "3"
-ureq = { version = "3", default-features = false, features = ["rustls"] }
-base64 = "0.22"
 serde = { version = "1", features = ["derive"] }
 dirs = "5"
 tracing = "0.1"

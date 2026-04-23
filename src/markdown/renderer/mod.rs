@@ -5,11 +5,11 @@
 mod blocks;
 mod estimate;
 mod inlines;
+mod table;
 
 use egui::*;
 
 use super::parser::MarkdownDoc;
-use crate::image_loader::ImageLoader;
 use crate::selection::TextSelector;
 use crate::theme::Theme;
 use crate::viewport::ViewportState;
@@ -22,7 +22,6 @@ pub fn render_doc(
     doc: &MarkdownDoc,
     theme: &Theme,
     font_size: f32,
-    image_loader: &mut ImageLoader,
     selector: &mut TextSelector,
     viewport: &mut ViewportState,
 ) {
@@ -72,7 +71,7 @@ pub fn render_doc(
 
                         let before = ui.min_rect().max.y;
 
-                        render_block(ui, node, theme, font_size, i, image_loader, selector);
+                        render_block(ui, node, theme, font_size, i, selector);
 
                         ui.add_space(BLOCK_SPACING);
                         let actual_h = (ui.min_rect().max.y - before - BLOCK_SPACING).max(0.0);
