@@ -9,10 +9,13 @@ use std::path::PathBuf;
 mod app;
 mod config;
 mod context_menu;
+mod file_watcher;
+mod font;
 mod image_loader;
 mod markdown;
 mod selection;
 mod theme;
+mod update;
 mod viewport;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

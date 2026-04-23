@@ -4,7 +4,7 @@ use egui::*;
 
 use crate::config::AppConfig;
 use crate::selection::TextSelector;
-use crate::theme::Theme;
+use crate::theme::Theme as MdViewTheme;
 
 const MAIN_MENU_WIDTH: f32 = 100.0;
 const SUBMENU_WIDTH: f32 = 140.0;
@@ -12,12 +12,8 @@ const MENU_ITEM_HEIGHT: f32 = 24.0;
 
 pub fn show_context_menu(
     ui: &mut Ui,
-    _theme: &mut Theme,
-    _font_size: &mut f32,
     selector: &mut TextSelector,
     file_path: &Option<std::path::PathBuf>,
-    _config: &mut AppConfig,
-    _config_needs_save: &mut bool,
 ) -> bool {
     let menu_id = Id::new("mdview_context_menu");
 
@@ -243,7 +239,7 @@ fn submenu_item(ui: &mut Ui, text: &str, index: u32, menu_id: Id) -> bool {
 /// 绘制子菜单
 pub fn show_submenus(
     ctx: &Context,
-    theme: &mut Theme,
+    theme: &mut MdViewTheme,
     font_size: &mut f32,
     config: &mut AppConfig,
     config_needs_save: &mut bool,
@@ -315,7 +311,7 @@ pub fn show_submenus(
             ui.set_min_width(SUBMENU_WIDTH);
             ui.spacing_mut().item_spacing = vec2(0.0, 1.0);
 
-            let themes = Theme::from_config();
+            let themes = MdViewTheme::from_config();
             for t in &themes {
                 let is_current = t.name == theme.name;
                 if check_item(ui, &t.name, is_current) {

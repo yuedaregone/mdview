@@ -1,260 +1,54 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 
 use egui::*;
 
 use crate::config::AppConfig;
+use crate::file_watcher::SimpleFileWatcher;
+use crate::font;
 use crate::image_loader::ImageLoader;
 use crate::markdown::cache::AstCache;
 use crate::markdown::parser::MarkdownDoc;
 use crate::selection::TextSelector;
 use crate::theme::Theme;
+use crate::update;
 use crate::viewport::ViewportState;
-use std::sync::Arc;
 
-struct LoadedFont {
-    id: String,
-    data: Arc<egui::FontData>,
-}
-
-#[derive(Default)]
-struct FontResolver {
-    db: Option<fontdb::Database>,
-}
-
-impl FontResolver {
-    fn resolve(
-        &mut self,
-        configured_name: Option<&str>,
-        configured_path: Option<&str>,
-        fallback_names: &[&str],
-    ) -> Option<LoadedFont> {
-        if let Some(font) = Self::load_from_path(configured_path) {
-            return Some(font);
-        }
-
-        if let Some(name) = configured_name {
-            if let Some(font) = self.find_by_name(name) {
-                return Some(font);
-            }
-            tracing::warn!("Configured font '{name}' was not found in system fonts");
-        }
-
-        for fallback in fallback_names {
-            if let Some(font) = self.find_by_name(fallback) {
-                return Some(font);
-            }
-        }
-
-        None
-    }
-
-    fn load_from_path(configured_path: Option<&str>) -> Option<LoadedFont> {
-        let path = std::path::Path::new(configured_path?);
-        if !path.is_file() {
-            tracing::warn!("Configured font path does not exist: {}", path.display());
-            return None;
-        }
-
-        let data = match std::fs::read(path) {
-            Ok(data) => data,
-            Err(err) => {
-                tracing::warn!("Failed to read font file {}: {}", path.display(), err);
-                return None;
-            }
-        };
-
-        Some(LoadedFont {
-            id: format!("font-file:{}", path.to_string_lossy()),
-            data: Arc::new(egui::FontData::from_owned(data)),
-        })
-    }
-
-    fn find_by_name(&mut self, name: &str) -> Option<LoadedFont> {
-        let db = self.system_db();
-        let query = fontdb::Query {
-            families: &[fontdb::Family::Name(name)],
-            weight: fontdb::Weight::NORMAL,
-            stretch: fontdb::Stretch::Normal,
-            style: fontdb::Style::Normal,
-        };
-        let id = db.query(&query)?;
-        let face = db.face(id)?;
-        let data = match &face.source {
-            fontdb::Source::Binary(bin) => bin.as_ref().as_ref().to_vec(),
-            fontdb::Source::File(path) => std::fs::read(path).ok()?,
-            fontdb::Source::SharedFile(path, _) => std::fs::read(path).ok()?,
-        };
-        let family_name = face.families.first()?.0.clone();
-
-        Some(LoadedFont {
-            id: format!("font-family:{family_name}"),
-            data: Arc::new(egui::FontData::from_owned(data)),
-        })
-    }
-
-    fn system_db(&mut self) -> &mut fontdb::Database {
-        self.db.get_or_insert_with(|| {
-            let mut db = fontdb::Database::new();
-            db.load_system_fonts();
-            db
-        })
-    }
-}
-
-fn proportional_fallbacks() -> &'static [&'static str] {
-    #[cfg(target_os = "windows")]
-    {
-        &["Microsoft YaHei", "Segoe UI", "Arial"]
-    }
-    #[cfg(target_os = "macos")]
-    {
-        &["PingFang SC", "SF Pro Text", "Helvetica Neue"]
-    }
-    #[cfg(target_os = "linux")]
-    {
-        &[
-            "Noto Sans CJK SC",
-            "Noto Sans",
-            "DejaVu Sans",
-            "Liberation Sans",
-        ]
-    }
-}
-
-fn monospace_fallbacks() -> &'static [&'static str] {
-    #[cfg(target_os = "windows")]
-    {
-        &["Cascadia Mono", "Consolas", "Courier New"]
-    }
-    #[cfg(target_os = "macos")]
-    {
-        &["SF Mono", "Menlo", "Monaco"]
-    }
-    #[cfg(target_os = "linux")]
-    {
-        &[
-            "JetBrains Mono",
-            "DejaVu Sans Mono",
-            "Liberation Mono",
-            "Monospace",
-        ]
-    }
-}
-
-fn install_font_override(
-    fonts: &mut egui::FontDefinitions,
-    family: egui::FontFamily,
-    resolver: &mut FontResolver,
-    configured_name: Option<&str>,
-    configured_path: Option<&str>,
-    fallback_names: &[&str],
-) {
-    if let Some(font) = resolver.resolve(configured_name, configured_path, fallback_names) {
-        let family_fonts = fonts.families.entry(family).or_default();
-        if !family_fonts.iter().any(|existing| existing == &font.id) {
-            family_fonts.insert(0, font.id.clone());
-        }
-        fonts.font_data.insert(font.id, font.data);
-    }
-}
-
-fn setup_fonts(ctx: &egui::Context, config: &AppConfig) {
-    let mut fonts = egui::FontDefinitions::default();
-    let mut resolver = FontResolver::default();
-
-    install_font_override(
-        &mut fonts,
-        egui::FontFamily::Proportional,
-        &mut resolver,
-        config.ui_font_name.as_deref(),
-        config.ui_font_path.as_deref(),
-        proportional_fallbacks(),
-    );
-    install_font_override(
-        &mut fonts,
-        egui::FontFamily::Monospace,
-        &mut resolver,
-        config.code_font_name.as_deref(),
-        config.code_font_path.as_deref(),
-        monospace_fallbacks(),
-    );
-
-    ctx.set_fonts(fonts);
-}
-
-struct SimpleFileWatcher {
-    path: Option<PathBuf>,
-    last_modified: Option<std::time::SystemTime>,
-    last_checked: Instant,
-}
-
-impl SimpleFileWatcher {
-    fn new(path: Option<PathBuf>) -> Self {
-        let last_modified = path
-            .as_ref()
-            .and_then(|p| std::fs::metadata(p).ok())
-            .and_then(|m| m.modified().ok());
-        Self {
-            path,
-            last_modified,
-            last_checked: Instant::now(),
-        }
-    }
-
-    fn check(&mut self) -> bool {
-        if self.last_checked.elapsed() < std::time::Duration::from_secs(2) {
-            return false;
-        }
-        self.last_checked = Instant::now();
-
-        if let Some(path) = &self.path {
-            if let Ok(meta) = std::fs::metadata(path) {
-                if let Ok(modified) = meta.modified() {
-                    if Some(modified) != self.last_modified {
-                        self.last_modified = Some(modified);
-                        return true;
-                    }
-                }
-            }
-        }
-        false
-    }
-}
-
-/// Main application state
+/// 主应用状态
 pub struct MdViewApp {
-    /// Current file path
+    /// 当前文件路径
     file_path: Option<PathBuf>,
-    /// Parsed markdown document
+    /// 解析后的 markdown 文档
     doc: Option<Arc<MarkdownDoc>>,
-    /// Current theme
+    /// 当前主题
     theme: Theme,
-    /// Base font size
+    /// 基础字体大小
     font_size: f32,
-    /// Whether the window has been shown for the first time
+    /// 是否已显示首帧
     first_frame_shown: bool,
-    /// Text selection state
+    /// 文本选择状态
     selector: TextSelector,
-    /// Async image loader
+    /// 异步图片加载器
     image_loader: ImageLoader,
-    /// Viewport culling state
+    /// 视口裁剪状态
     viewport: ViewportState,
-    /// AST cache for avoiding re-parsing
+    /// AST 缓存（避免重复解析）
     ast_cache: AstCache,
-    /// Error message to display
+    /// 错误信息
     error_msg: Option<String>,
-    /// App configuration
+    /// 应用配置
     config: AppConfig,
-    /// Whether window is maximized
+    /// 窗口是否最大化
     window_maximized: bool,
-    /// Simple file watcher
+    /// 简单文件监视器
     file_watcher: SimpleFileWatcher,
-    /// Flag to indicate if config needs saving
+    /// 配置是否需要保存
     config_needs_save: bool,
-    /// Last time config was saved
+    /// 上次保存配置的时间
     last_save_time: Instant,
 }
+
 impl MdViewApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
@@ -272,11 +66,12 @@ impl MdViewApp {
         let mut image_loader = ImageLoader::new(base_dir.clone());
         image_loader.set_context(cc.egui_ctx.clone());
 
-        setup_fonts(&cc.egui_ctx, &config);
+        // 设置字体
+        font::setup_fonts(&cc.egui_ctx, &config);
 
         let font_size = config.font_size;
 
-        // Find the theme from presets (returns static reference)
+        // 查找主题
         let themes = Theme::from_config();
         let theme = if let Some(ref theme_name) = config.theme_name {
             themes
@@ -311,7 +106,7 @@ impl MdViewApp {
         }
     }
 
-    /// Load a new file (using AST cache)
+    /// 加载新文件（使用 AST 缓存）
     pub fn load_file(&mut self, path: PathBuf) {
         match std::fs::read_to_string(&path) {
             Ok(content) => {
@@ -332,14 +127,14 @@ impl MdViewApp {
         }
     }
 
-    /// Save current settings to config
+    /// 保存当前配置
     pub fn save_config(&mut self) {
         self.config.theme_name = Some(self.theme.name.to_string());
         self.config.font_size = self.font_size;
         self.config_needs_save = true;
     }
 
-    /// Apply theme to egui visuals
+    /// 应用主题到 egui 视觉效果
     fn apply_theme(&self, ctx: &Context) {
         let mut visuals = if self.theme.is_dark {
             Visuals::dark()
@@ -350,7 +145,7 @@ impl MdViewApp {
         visuals.extreme_bg_color = self.theme.background;
         visuals.widgets.inactive.bg_fill = self.theme.code_bg;
         visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, self.theme.foreground);
-        // Set table stripe color for Grid::striped
+        // 设置表格条纹颜色
         if let Some(stripe) = self.theme.table_stripe_bg {
             visuals.faint_bg_color = stripe;
         }
@@ -362,150 +157,63 @@ impl eframe::App for MdViewApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         ctx.options_mut(|opts| opts.line_scroll_speed = 100.0);
 
-        // Track maximized state FIRST
-        let currently_maximized = ctx.input(|i| i.viewport().maximized).unwrap_or(false);
+        // 1. 窗口状态跟踪
+        update::handle_window_state(
+            ctx,
+            &mut self.config,
+            &mut self.window_maximized,
+            &mut self.config_needs_save,
+            &mut self.last_save_time,
+        );
 
-        // Get viewport info for position
-        let viewport_rect = ctx.input(|i| i.viewport().outer_rect);
-
-        // Save config when maximized state changes or window size/position changes
-        if currently_maximized != self.window_maximized {
-            self.window_maximized = currently_maximized;
-            self.config.maximized = currently_maximized;
-
-            // Save position when unmaximizing
-            if !currently_maximized {
-                if let Some(rect) = viewport_rect {
-                    self.config.window_x = Some(rect.min.x);
-                    self.config.window_y = Some(rect.min.y);
-                }
-            }
-            self.save_config(); // Use debounced save
-        } else if !currently_maximized {
-            let size = ctx.available_rect();
-            if size.width() > 0.0 && size.height() > 0.0 {
-                let size_changed = size.width() != self.config.window_width
-                    || size.height() != self.config.window_height;
-
-                // Save if position not set yet OR position changed
-                let need_save_pos =
-                    self.config.window_x.is_none() || self.config.window_y.is_none();
-                let pos_changed = if let Some(rect) = viewport_rect {
-                    self.config
-                        .window_x
-                        .is_none_or(|x| (x - rect.min.x).abs() > 1.0)
-                        || self
-                            .config
-                            .window_y
-                            .is_none_or(|y| (y - rect.min.y).abs() > 1.0)
-                } else {
-                    false
-                };
-
-                if size_changed || need_save_pos || pos_changed {
-                    self.config.window_width = size.width();
-                    self.config.window_height = size.height();
-
-                    if let Some(rect) = viewport_rect {
-                        self.config.window_x = Some(rect.min.x);
-                        self.config.window_y = Some(rect.min.y);
-                    }
-
-                    self.save_config();
-                }
-            }
-        }
-
+        // 2. 应用主题
         self.apply_theme(ctx);
+
+        // 3. 轮询图片加载
         if self.image_loader.poll() {
             ctx.request_repaint();
         }
+
+        // 4. 清除选择器 segments
         self.selector.clear_segments();
 
-        // Debounce config saving (use Duration instead of f64)
-        if self.config_needs_save
-            && self.last_save_time.elapsed() > std::time::Duration::from_secs(1)
-        {
-            if let Err(e) = self.config.save() {
-                tracing::error!("Config save failed: {}", e);
-            }
-            self.config_needs_save = false;
-            self.last_save_time = Instant::now();
-        }
+        // 5. 防抖动保存配置
+        update::flush_config_save(
+            &self.config,
+            &mut self.config_needs_save,
+            &mut self.last_save_time,
+        );
 
+        // 6. 标记首帧已显示
         if !self.first_frame_shown {
             self.first_frame_shown = true;
         }
 
-        // Handle keyboard shortcuts
-        let has_selection = self.selector.has_selection();
-        ctx.input(|input| {
-            if input.modifiers.ctrl {
-                // Ctrl+C - Copy selected text
-                if input.key_pressed(egui::Key::C) && has_selection {
-                    self.selector.copy_to_clipboard();
-                }
-                // Ctrl+= - Increase font size
-                if input.key_pressed(egui::Key::Equals) {
-                    self.font_size = (self.font_size + 2.0).min(32.0);
-                    self.save_config();
-                    crate::markdown::highlight::clear_highlight_cache();
-                }
-                // Ctrl+- - Decrease font size
-                if input.key_pressed(egui::Key::Minus) {
-                    self.font_size = (self.font_size - 2.0).max(8.0);
-                    self.save_config();
-                    crate::markdown::highlight::clear_highlight_cache();
-                }
-                // Ctrl+0 - Reset font size
-                if input.key_pressed(egui::Key::Num0) {
-                    self.font_size = 16.0;
-                    self.save_config();
-                }
-                // Ctrl+O - Open file directory
-                if input.key_pressed(egui::Key::O) {
-                    if let Some(path) = &self.file_path {
-                        if let Some(dir) = path.parent() {
-                            let _ = open::that(dir);
-                        }
-                    }
-                }
-                // Ctrl+T - Cycle theme
-                if input.key_pressed(egui::Key::T) {
-                    let themes = Theme::from_config();
-                    let current_idx = themes.iter().position(|t| t.name == self.theme.name);
-                    if let Some(idx) = current_idx {
-                        let next_idx = (idx + 1) % themes.len();
-                        self.theme = themes[next_idx].clone();
-                        self.save_config();
-                        crate::markdown::highlight::clear_highlight_cache();
-                    }
-                }
-            }
-        });
+        // 7. 处理快捷键
+        update::handle_keyboard_shortcuts(
+            ctx,
+            &mut self.font_size,
+            &mut self.theme,
+            &mut self.config,
+            &mut self.config_needs_save,
+            &self.selector,
+            &self.file_path,
+        );
 
-        // Handle file watcher polling (every 2 seconds)
-        if self.file_watcher.check() {
-            if let Some(path) = &self.file_path.clone() {
-                self.load_file(path.clone());
+        // 8. 处理文件监视器
+        if update::check_file_watcher(&mut self.file_watcher) {
+            if let Some(path) = self.file_path.clone() {
+                self.load_file(path);
                 ctx.request_repaint();
             }
         }
 
-        // Handle dropped files
-        let dropped_files = ctx.input(|i| i.raw.dropped_files.clone());
-        if let Some(dropped) = dropped_files.first() {
-            if let Some(path) = &dropped.path {
-                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                if matches!(ext, "md" | "markdown" | "txt") {
-                    self.load_file(path.clone());
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        ctx.send_viewport_cmd(ViewportCommand::Title(format!("{} — mdview", name)));
-                    }
-                }
-            }
+        // 9. 处理拖拽文件
+        if let Some(path) = update::check_dropped_files(ctx) {
+            self.load_file(path);
         }
 
+        // 10. 渲染 UI
         CentralPanel::default()
             .frame(Frame::NONE.fill(self.theme.background))
             .show(ctx, |ui| {
@@ -513,15 +221,11 @@ impl eframe::App for MdViewApp {
                 let menu_id = egui::Id::new("mdview_context_menu");
                 crate::context_menu::show_context_menu(
                     ui,
-                    &mut self.theme,
-                    &mut self.font_size,
                     &mut self.selector,
                     &self.file_path,
-                    &mut self.config,
-                    &mut self.config_needs_save,
                 );
 
-                // 显示右键子菜单（在主菜单后绘制，确保 sub_rect 在关闭检测前更新）
+                // 显示右键子菜单
                 crate::context_menu::show_submenus(
                     ctx,
                     &mut self.theme,
@@ -531,9 +235,10 @@ impl eframe::App for MdViewApp {
                     menu_id,
                 );
 
-                // 检测菜单关闭（在子菜单绘制后执行，确保 sub_rect 已更新）
+                // 检测菜单关闭
                 crate::context_menu::check_menu_close(ui, menu_id);
 
+                // 渲染内容
                 if let Some(doc) = &self.doc {
                     crate::markdown::renderer::render_doc(
                         ui,
