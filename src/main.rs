@@ -160,12 +160,18 @@ fn main() -> eframe::Result<()> {
         .map(|content| markdown::parser::parse_full(&content));
 
     let mut viewport_builder = egui::ViewportBuilder::default()
-        .with_inner_size([config.window_width, config.window_height])
         .with_min_inner_size([400.0, 300.0])
         .with_title("mdview");
 
-    if let (Some(x), Some(y)) = (config.window_x, config.window_y) {
-        viewport_builder = viewport_builder.with_position(egui::Pos2::new(x, y));
+    if !config.maximized {
+        viewport_builder =
+            viewport_builder.with_inner_size([config.window_width, config.window_height]);
+    }
+
+    if !config.maximized {
+        if let (Some(x), Some(y)) = (config.window_x, config.window_y) {
+            viewport_builder = viewport_builder.with_position(egui::Pos2::new(x, y));
+        }
     }
 
     if config.maximized {
@@ -191,7 +197,7 @@ fn main() -> eframe::Result<()> {
         "mdview",
         native_options,
         Box::new(move |cc| {
-            let app = app::MdViewApp::new(cc, doc, file_to_open.clone());
+            let app = app::MdViewApp::new(cc, config.clone(), doc, file_to_open.clone());
             Ok(Box::new(app))
         }),
     )

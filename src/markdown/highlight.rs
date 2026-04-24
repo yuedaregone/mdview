@@ -19,7 +19,16 @@ struct Highlighter {
 impl Highlighter {
     fn new() -> Self {
         let syntax_set = SyntaxSet::load_defaults_nonewlines();
-        let theme_set = ThemeSet::load_defaults();
+        let mut theme_set = ThemeSet::load_defaults();
+        theme_set.themes.retain(|name, _| {
+            matches!(
+                name.as_str(),
+                "InspiredGitHub"
+                    | "base16-ocean.dark"
+                    | "Solarized (light)"
+                    | "Solarized (dark)"
+            )
+        });
         Self {
             syntax_set,
             theme_set,
@@ -133,6 +142,10 @@ pub fn highlight_code(
     theme_name: &str,
     font_size: f32,
 ) -> Option<LayoutJob> {
+    if lang.trim().is_empty() {
+        return None;
+    }
+
     let key = cache_key(code, lang, theme_name, font_size);
     let cache = HIGHLIGHT_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
 

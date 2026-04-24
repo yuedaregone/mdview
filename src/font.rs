@@ -4,9 +4,12 @@
 
 use std::sync::Arc;
 
+const FALLBACK_CACHE_KEY: &str = "__fallback__";
+
 pub struct LoadedFont {
     pub id: String,
     pub data: Arc<egui::FontData>,
+    pub cache_path: Option<String>,
 }
 
 #[derive(Default)]
@@ -19,10 +22,19 @@ impl FontResolver {
         &mut self,
         configured_name: Option<&str>,
         configured_path: Option<&str>,
+        cached_name: Option<&str>,
+        cached_path: Option<&str>,
         fallback_names: &[&str],
     ) -> Option<LoadedFont> {
         if let Some(font) = Self::load_from_path(configured_path) {
             return Some(font);
+        }
+
+        let cache_key = cache_key(configured_name);
+        if cached_name == Some(cache_key) {
+            if let Some(font) = Self::load_from_path(cached_path) {
+                return Some(font);
+            }
         }
 
         if let Some(name) = configured_name {
@@ -59,6 +71,7 @@ impl FontResolver {
         Some(LoadedFont {
             id: format!("font-file:{}", path.to_string_lossy()),
             data: Arc::new(egui::FontData::from_owned(data)),
+            cache_path: Some(path.to_string_lossy().to_string()),
         })
     }
 
@@ -72,16 +85,23 @@ impl FontResolver {
         };
         let id = db.query(&query)?;
         let face = db.face(id)?;
-        let data = match &face.source {
-            fontdb::Source::Binary(bin) => bin.as_ref().as_ref().to_vec(),
-            fontdb::Source::File(path) => std::fs::read(path).ok()?,
-            fontdb::Source::SharedFile(path, _) => std::fs::read(path).ok()?,
+        let (data, cache_path) = match &face.source {
+            fontdb::Source::Binary(bin) => (bin.as_ref().as_ref().to_vec(), None),
+            fontdb::Source::File(path) => (
+                std::fs::read(path).ok()?,
+                Some(path.to_string_lossy().to_string()),
+            ),
+            fontdb::Source::SharedFile(path, _) => (
+                std::fs::read(path).ok()?,
+                Some(path.to_string_lossy().to_string()),
+            ),
         };
         let family_name = face.families.first()?.0.clone();
 
         Some(LoadedFont {
             id: format!("font-family:{family_name}"),
             data: Arc::new(egui::FontData::from_owned(data)),
+            cache_path,
         })
     }
 
@@ -92,6 +112,10 @@ impl FontResolver {
             db
         })
     }
+}
+
+fn cache_key(configured_name: Option<&str>) -> &str {
+    configured_name.unwrap_or(FALLBACK_CACHE_KEY)
 }
 
 fn proportional_fallbacks() -> &'static [&'static str] {
@@ -140,18 +164,36 @@ fn install_font_override(
     resolver: &mut FontResolver,
     configured_name: Option<&str>,
     configured_path: Option<&str>,
+    cached_name: Option<&str>,
+    cached_path: Option<&str>,
     fallback_names: &[&str],
-) -> Option<String> {
-    if let Some(font) = resolver.resolve(configured_name, configured_path, fallback_names) {
+    ) -> (Option<String>, Option<String>, Option<String>) {
+    if let Some(font) = resolver.resolve(
+        configured_name,
+        configured_path,
+        cached_name,
+        cached_path,
+        fallback_names,
+    ) {
         let font_id = font.id.clone();
+        let cache_name = if configured_path.is_none() && font.cache_path.is_some() {
+            Some(cache_key(configured_name).to_string())
+        } else {
+            None
+        };
+        let cache_path = if cache_name.is_some() {
+            font.cache_path.clone()
+        } else {
+            None
+        };
         let family_fonts = fonts.families.entry(family).or_default();
         if !family_fonts.iter().any(|existing| existing == &font_id) {
             family_fonts.insert(0, font_id.clone());
         }
         fonts.font_data.insert(font.id, font.data);
-        Some(font_id)
+        (Some(font_id), cache_name, cache_path)
     } else {
-        None
+        (None, None, None)
     }
 }
 
@@ -174,26 +216,48 @@ fn append_family_fallback(
 }
 
 /// 根据配置设置 egui 字体
-pub fn setup_fonts(ctx: &egui::Context, config: &crate::config::AppConfig) {
+pub fn setup_fonts(ctx: &egui::Context, config: &mut crate::config::AppConfig) -> bool {
     let mut fonts = egui::FontDefinitions::default();
     let mut resolver = FontResolver::default();
+    let mut config_changed = false;
 
-    let proportional_font = install_font_override(
+    let (proportional_font, ui_cached_name, ui_cached_path) = install_font_override(
         &mut fonts,
         egui::FontFamily::Proportional,
         &mut resolver,
         config.ui_font_name.as_deref(),
         config.ui_font_path.as_deref(),
+        config.ui_font_cached_name.as_deref(),
+        config.ui_font_cached_path.as_deref(),
         proportional_fallbacks(),
     );
-    let _monospace_font = install_font_override(
+    let (_monospace_font, code_cached_name, code_cached_path) = install_font_override(
         &mut fonts,
         egui::FontFamily::Monospace,
         &mut resolver,
         config.code_font_name.as_deref(),
         config.code_font_path.as_deref(),
+        config.code_font_cached_name.as_deref(),
+        config.code_font_cached_path.as_deref(),
         monospace_fallbacks(),
     );
+
+    if config.ui_font_cached_name != ui_cached_name {
+        config.ui_font_cached_name = ui_cached_name;
+        config_changed = true;
+    }
+    if config.ui_font_cached_path != ui_cached_path {
+        config.ui_font_cached_path = ui_cached_path;
+        config_changed = true;
+    }
+    if config.code_font_cached_name != code_cached_name {
+        config.code_font_cached_name = code_cached_name;
+        config_changed = true;
+    }
+    if config.code_font_cached_path != code_cached_path {
+        config.code_font_cached_path = code_cached_path;
+        config_changed = true;
+    }
 
     // Let code blocks keep their monospace primary font, but fall back to the UI
     // font family for CJK glyphs that many monospace fonts do not provide.
@@ -204,4 +268,5 @@ pub fn setup_fonts(ctx: &egui::Context, config: &crate::config::AppConfig) {
     );
 
     ctx.set_fonts(fonts);
+    config_changed
 }

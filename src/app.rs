@@ -49,15 +49,15 @@ pub struct MdViewApp {
 impl MdViewApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
+        mut config: AppConfig,
         doc: Option<MarkdownDoc>,
         file_path: Option<PathBuf>,
     ) -> Self {
-        let config = AppConfig::load();
-
         // 设置字体
-        font::setup_fonts(&cc.egui_ctx, &config);
+        let fonts_changed = font::setup_fonts(&cc.egui_ctx, &mut config);
 
         let font_size = config.font_size;
+        let window_maximized = config.maximized;
 
         // 查找主题
         let themes = Theme::from_config();
@@ -86,9 +86,9 @@ impl MdViewApp {
             ast_cache: AstCache::default(),
             error_msg: None,
             config,
-            window_maximized: false,
+            window_maximized,
             file_watcher,
-            config_needs_save: false,
+            config_needs_save: fonts_changed,
             last_save_time: Instant::now(),
         }
     }
