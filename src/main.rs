@@ -145,7 +145,7 @@ fn main() -> eframe::Result<()> {
     }
 
     // Load config for window settings
-    let config = config::AppConfig::load();
+    let mut config = config::AppConfig::load();
 
     // Use command line file if provided, otherwise use last opened file
     let file_to_open = args
@@ -158,6 +158,10 @@ fn main() -> eframe::Result<()> {
         .as_ref()
         .and_then(|p| std::fs::read_to_string(p).ok())
         .map(|content| markdown::parser::parse_full(&content));
+
+    let prepared_fonts = font::prepare_fonts(&mut config);
+    let theme = resolve_startup_theme(&config);
+    let file_watcher = file_watcher::SimpleFileWatcher::new(file_to_open.clone());
 
     let mut viewport_builder = egui::ViewportBuilder::default()
         .with_min_inner_size([400.0, 300.0])
@@ -197,10 +201,30 @@ fn main() -> eframe::Result<()> {
         "mdview",
         native_options,
         Box::new(move |cc| {
-            let app = app::MdViewApp::new(cc, config.clone(), doc, file_to_open.clone());
+            let bootstrap = app::AppBootstrap {
+                config: config.clone(),
+                doc,
+                file_path: file_to_open.clone(),
+                theme,
+                file_watcher,
+                prepared_fonts,
+            };
+            let app = app::MdViewApp::new(cc, bootstrap);
             Ok(Box::new(app))
         }),
     )
+}
+
+fn resolve_startup_theme(config: &config::AppConfig) -> theme::Theme {
+    let themes = theme::Theme::from_config();
+    if let Some(theme_name) = config.theme_name.as_deref() {
+        themes
+            .into_iter()
+            .find(|theme| theme.name == theme_name)
+            .unwrap_or_else(theme::Theme::default_theme)
+    } else {
+        theme::Theme::default_theme()
+    }
 }
 
 fn should_prepare_cli_console(raw_args: &[OsString], parsed_args: Option<&Args>) -> bool {

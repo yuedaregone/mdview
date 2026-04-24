@@ -6,6 +6,11 @@ use std::sync::Arc;
 
 const FALLBACK_CACHE_KEY: &str = "__fallback__";
 
+pub struct PreparedFonts {
+    definitions: egui::FontDefinitions,
+    config_changed: bool,
+}
+
 pub struct LoadedFont {
     pub id: String,
     pub data: Arc<egui::FontData>,
@@ -215,8 +220,14 @@ fn append_family_fallback(
     }
 }
 
-/// 根据配置设置 egui 字体
-pub fn setup_fonts(ctx: &egui::Context, config: &mut crate::config::AppConfig) -> bool {
+impl PreparedFonts {
+    pub fn config_changed(&self) -> bool {
+        self.config_changed
+    }
+}
+
+/// 预先解析字体配置，避免在窗口创建阶段做系统字体探测和磁盘读取
+pub fn prepare_fonts(config: &mut crate::config::AppConfig) -> PreparedFonts {
     let mut fonts = egui::FontDefinitions::default();
     let mut resolver = FontResolver::default();
     let mut config_changed = false;
@@ -267,6 +278,13 @@ pub fn setup_fonts(ctx: &egui::Context, config: &mut crate::config::AppConfig) -
         proportional_font.as_deref(),
     );
 
-    ctx.set_fonts(fonts);
-    config_changed
+    PreparedFonts {
+        definitions: fonts,
+        config_changed,
+    }
+}
+
+/// 将预先准备好的字体定义应用到 egui
+pub fn apply_prepared_fonts(ctx: &egui::Context, prepared: PreparedFonts) {
+    ctx.set_fonts(prepared.definitions);
 }

@@ -14,6 +14,16 @@ use crate::theme::Theme;
 use crate::update;
 use crate::viewport::ViewportState;
 
+/// 创建界面前预先准备好的启动数据
+pub struct AppBootstrap {
+    pub config: AppConfig,
+    pub doc: Option<MarkdownDoc>,
+    pub file_path: Option<PathBuf>,
+    pub theme: Theme,
+    pub file_watcher: SimpleFileWatcher,
+    pub prepared_fonts: font::PreparedFonts,
+}
+
 /// 主应用状态
 pub struct MdViewApp {
     /// 当前文件路径
@@ -47,47 +57,33 @@ pub struct MdViewApp {
 }
 
 impl MdViewApp {
-    pub fn new(
-        cc: &eframe::CreationContext<'_>,
-        mut config: AppConfig,
-        doc: Option<MarkdownDoc>,
-        file_path: Option<PathBuf>,
-    ) -> Self {
-        // 设置字体
-        let fonts_changed = font::setup_fonts(&cc.egui_ctx, &mut config);
+    pub fn new(cc: &eframe::CreationContext<'_>, bootstrap: AppBootstrap) -> Self {
+        let fonts_changed = bootstrap.prepared_fonts.config_changed();
+        font::apply_prepared_fonts(&cc.egui_ctx, bootstrap.prepared_fonts);
 
-        let font_size = config.font_size;
-        let window_maximized = config.maximized;
+        let mut style = (*cc.egui_ctx.style()).clone();
+        style.animation_time = 0.0;
+        cc.egui_ctx.set_style(style);
+        cc.egui_ctx
+            .options_mut(|opts| opts.line_scroll_speed = 100.0);
 
-        // 查找主题
-        let themes = Theme::from_config();
-        let theme = if let Some(ref theme_name) = config.theme_name {
-            themes
-                .iter()
-                .find(|t| t.name == *theme_name)
-                .cloned()
-                .unwrap_or_else(Theme::default_theme)
-        } else {
-            Theme::default_theme()
-        };
-
-        let file_watcher = SimpleFileWatcher::new(file_path.clone());
-
-        let doc = doc.map(Arc::new);
+        let font_size = bootstrap.config.font_size;
+        let window_maximized = bootstrap.config.maximized;
+        let doc = bootstrap.doc.map(Arc::new);
 
         let app = Self {
-            file_path,
+            file_path: bootstrap.file_path,
             doc,
-            theme: theme.clone(),
-            applied_theme: theme,
+            theme: bootstrap.theme.clone(),
+            applied_theme: bootstrap.theme,
             font_size,
             selector: TextSelector::new(),
             viewport: ViewportState::new(0),
             ast_cache: AstCache::default(),
             error_msg: None,
-            config,
+            config: bootstrap.config,
             window_maximized,
-            file_watcher,
+            file_watcher: bootstrap.file_watcher,
             config_needs_save: fonts_changed,
             last_save_time: Instant::now(),
         };
@@ -155,8 +151,6 @@ impl MdViewApp {
 
 impl eframe::App for MdViewApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        ctx.options_mut(|opts| opts.line_scroll_speed = 100.0);
-
         // 1. 窗口状态跟踪
         update::handle_window_state(
             ctx,
