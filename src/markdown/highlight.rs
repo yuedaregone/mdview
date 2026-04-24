@@ -23,10 +23,7 @@ impl Highlighter {
         theme_set.themes.retain(|name, _| {
             matches!(
                 name.as_str(),
-                "InspiredGitHub"
-                    | "base16-ocean.dark"
-                    | "Solarized (light)"
-                    | "Solarized (dark)"
+                "InspiredGitHub" | "base16-ocean.dark" | "Solarized (light)" | "Solarized (dark)"
             )
         });
         Self {

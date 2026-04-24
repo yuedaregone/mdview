@@ -167,7 +167,7 @@ fn install_font_override(
     cached_name: Option<&str>,
     cached_path: Option<&str>,
     fallback_names: &[&str],
-    ) -> (Option<String>, Option<String>, Option<String>) {
+) -> (Option<String>, Option<String>, Option<String>) {
     if let Some(font) = resolver.resolve(
         configured_name,
         configured_path,

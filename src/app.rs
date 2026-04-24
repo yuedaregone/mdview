@@ -22,10 +22,10 @@ pub struct MdViewApp {
     doc: Option<Arc<MarkdownDoc>>,
     /// 当前主题
     theme: Theme,
+    /// 已同步到 egui 的主题
+    applied_theme: Theme,
     /// 基础字体大小
     font_size: f32,
-    /// 是否已显示首帧
-    first_frame_shown: bool,
     /// 文本选择状态
     selector: TextSelector,
     /// 视口裁剪状态
@@ -75,12 +75,12 @@ impl MdViewApp {
 
         let doc = doc.map(Arc::new);
 
-        Self {
+        let app = Self {
             file_path,
             doc,
-            theme,
+            theme: theme.clone(),
+            applied_theme: theme,
             font_size,
-            first_frame_shown: false,
             selector: TextSelector::new(),
             viewport: ViewportState::new(0),
             ast_cache: AstCache::default(),
@@ -90,7 +90,12 @@ impl MdViewApp {
             file_watcher,
             config_needs_save: fonts_changed,
             last_save_time: Instant::now(),
-        }
+        };
+
+        // 提前应用主题，防止首帧闪烁
+        app.apply_theme(&cc.egui_ctx);
+
+        app
     }
 
     /// 加载新文件（使用 AST 缓存）
@@ -135,6 +140,17 @@ impl MdViewApp {
         }
         ctx.set_visuals(visuals);
     }
+
+    /// 仅在主题变化时同步 egui visuals
+    fn sync_theme(&mut self, ctx: &Context) -> bool {
+        if self.applied_theme == self.theme {
+            return false;
+        }
+
+        self.apply_theme(ctx);
+        self.applied_theme = self.theme.clone();
+        true
+    }
 }
 
 impl eframe::App for MdViewApp {
@@ -150,25 +166,17 @@ impl eframe::App for MdViewApp {
             &mut self.last_save_time,
         );
 
-        // 2. 应用主题
-        self.apply_theme(ctx);
-
-        // 3. 清除选择器 segments
+        // 2. 清除选择器 segments
         self.selector.clear_segments();
 
-        // 4. 防抖动保存配置
+        // 3. 防抖动保存配置
         update::flush_config_save(
             &self.config,
             &mut self.config_needs_save,
             &mut self.last_save_time,
         );
 
-        // 5. 标记首帧已显示
-        if !self.first_frame_shown {
-            self.first_frame_shown = true;
-        }
-
-        // 6. 处理快捷键
+        // 4. 处理快捷键
         update::handle_keyboard_shortcuts(
             ctx,
             &mut self.font_size,
@@ -179,7 +187,10 @@ impl eframe::App for MdViewApp {
             &self.file_path,
         );
 
-        // 7. 处理文件监视器
+        // 5. 在渲染前同步主题，保证快捷键切主题当帧生效
+        self.sync_theme(ctx);
+
+        // 6. 处理文件监视器
         if update::check_file_watcher(&mut self.file_watcher) {
             if let Some(path) = self.file_path.clone() {
                 self.load_file(path);
@@ -187,12 +198,12 @@ impl eframe::App for MdViewApp {
             }
         }
 
-        // 8. 处理拖拽文件
+        // 7. 处理拖拽文件
         if let Some(path) = update::check_dropped_files(ctx) {
             self.load_file(path);
         }
 
-        // 9. 渲染 UI
+        // 8. 渲染 UI
         CentralPanel::default()
             .frame(Frame::NONE.fill(self.theme.background))
             .show(ctx, |ui| {
@@ -269,6 +280,11 @@ impl eframe::App for MdViewApp {
                     });
                 }
             });
+
+        // 菜单内切主题发生在渲染过程中，这里补一次同步用于下一次重绘
+        if self.sync_theme(ctx) {
+            ctx.request_repaint();
+        }
     }
 
     fn save(&mut self, _storage: &mut dyn eframe::Storage) {
