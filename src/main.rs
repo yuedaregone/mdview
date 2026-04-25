@@ -165,21 +165,17 @@ fn main() -> eframe::Result<()> {
 
     let mut viewport_builder = egui::ViewportBuilder::default()
         .with_min_inner_size([400.0, 300.0])
-        .with_title("mdview");
-
-    if !config.maximized {
-        viewport_builder =
-            viewport_builder.with_inner_size([config.window_width, config.window_height]);
-    }
-
-    if !config.maximized {
-        if let (Some(x), Some(y)) = (config.window_x, config.window_y) {
-            viewport_builder = viewport_builder.with_position(egui::Pos2::new(x, y));
-        }
-    }
+        .with_title("mdview")
+        .with_decorations(false)
+        .with_transparent(true);
 
     if config.maximized {
         viewport_builder = viewport_builder.with_maximized(true);
+    } else {
+        viewport_builder = viewport_builder.with_inner_size([config.window_width, config.window_height]);
+        if let (Some(x), Some(y)) = (config.window_x, config.window_y) {
+            viewport_builder = viewport_builder.with_position(egui::Pos2::new(x, y));
+        }
     }
 
     let mut native_options = eframe::NativeOptions {

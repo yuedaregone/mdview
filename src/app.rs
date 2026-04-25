@@ -54,6 +54,8 @@ pub struct MdViewApp {
     config_needs_save: bool,
     /// 上次保存配置的时间
     last_save_time: Instant,
+    /// 首帧是否已完成渲染
+    first_frame_done: bool,
 }
 
 impl MdViewApp {
@@ -63,7 +65,16 @@ impl MdViewApp {
 
         let mut style = (*cc.egui_ctx.style()).clone();
         style.animation_time = 0.0;
+        style.visuals = if bootstrap.theme.is_dark {
+            Visuals::dark()
+        } else {
+            Visuals::light()
+        };
+        // 强制同步背景色
+        style.visuals.panel_fill = bootstrap.theme.background;
+        style.visuals.extreme_bg_color = bootstrap.theme.background;
         cc.egui_ctx.set_style(style);
+
         cc.egui_ctx
             .options_mut(|opts| opts.line_scroll_speed = 100.0);
 
@@ -86,6 +97,7 @@ impl MdViewApp {
             file_watcher: bootstrap.file_watcher,
             config_needs_save: fonts_changed,
             last_save_time: Instant::now(),
+            first_frame_done: false,
         };
 
         // 提前应用主题，防止首帧闪烁
@@ -274,6 +286,13 @@ impl eframe::App for MdViewApp {
                     });
                 }
             });
+
+        // 关键逻辑：首帧渲染后，恢复系统边框和非透明状态
+        if !self.first_frame_done {
+            ctx.send_viewport_cmd(ViewportCommand::Decorations(true));
+            ctx.send_viewport_cmd(ViewportCommand::Transparent(false));
+            self.first_frame_done = true;
+        }
 
         // 菜单内切主题发生在渲染过程中，这里补一次同步用于下一次重绘
         if self.sync_theme(ctx) {

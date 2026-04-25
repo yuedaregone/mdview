@@ -100,6 +100,8 @@ pub fn render_doc(
 
     if heights_changed {
         viewport.mark_layout_dirty();
+        // 只有当高度变化超过一定阈值，或者已经显示过第一帧后才请求重绘
+        // 这能减少启动时的 Layout Shift 导致的视觉闪烁
         ui.ctx().request_repaint();
     }
 }
