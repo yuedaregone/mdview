@@ -54,8 +54,8 @@ pub struct MdViewApp {
     config_needs_save: bool,
     /// 上次保存配置的时间
     last_save_time: Instant,
-    /// 首帧是否已完成渲染
-    first_frame_done: bool,
+    /// 下次渲染文档时是否需要把主滚动区重置到顶部
+    scroll_to_top_pending: bool,
 }
 
 impl MdViewApp {
@@ -89,7 +89,7 @@ impl MdViewApp {
             applied_theme: bootstrap.theme,
             font_size,
             selector: TextSelector::new(),
-            viewport: ViewportState::new(0),
+            viewport: ViewportState::new(0), // Ensure viewport starts at the top
             ast_cache: AstCache::default(),
             error_msg: None,
             config: bootstrap.config,
@@ -97,7 +97,7 @@ impl MdViewApp {
             file_watcher: bootstrap.file_watcher,
             config_needs_save: fonts_changed,
             last_save_time: Instant::now(),
-            first_frame_done: false,
+            scroll_to_top_pending: false,
         };
 
         // 提前应用主题，防止首帧闪烁
@@ -108,14 +108,23 @@ impl MdViewApp {
 
     /// 加载新文件（使用 AST 缓存）
     pub fn load_file(&mut self, path: PathBuf) {
+        self.load_file_inner(path, true);
+    }
+
+    fn reload_file(&mut self, path: PathBuf) {
+        self.load_file_inner(path, false);
+    }
+
+    fn load_file_inner(&mut self, path: PathBuf, scroll_to_top: bool) {
         match std::fs::read_to_string(&path) {
             Ok(content) => {
                 self.error_msg = None;
                 self.doc = Some(self.ast_cache.get_or_parse(&path, &content));
-                self.viewport.reset(0);
+                self.viewport.reset(0); // Ensure viewport starts at the top when loading a new file
+                self.scroll_to_top_pending |= scroll_to_top;
                 self.file_path = Some(path.clone());
                 self.file_watcher = SimpleFileWatcher::new(Some(path.clone()));
-                self.config.last_file = Some(path.to_string_lossy().to_string());
+
                 self.save_config();
             }
             Err(e) => {
@@ -159,6 +168,91 @@ impl MdViewApp {
         self.applied_theme = self.theme.clone();
         true
     }
+
+    fn window_title(&self) -> String {
+        self.file_path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+            .map(|name| format!("{name} - mdview"))
+            .unwrap_or_else(|| "mdview".to_string())
+    }
+
+    fn render_title_bar(&self, ctx: &Context) {
+        let title_bar_height = 30.0;
+        let is_maximized = ctx.input(|i| i.viewport().maximized).unwrap_or(false);
+        let title_bar_bg = self.theme.background;
+        let hover_bg = self.theme.code_bg;
+        let text_color = self.theme.foreground;
+
+        TopBottomPanel::top("mdview_title_bar")
+            .exact_height(title_bar_height)
+            .frame(
+                Frame::NONE
+                    .fill(title_bar_bg)
+                    .stroke(Stroke::new(1.0, self.theme.hr_color))
+                    .inner_margin(Margin::symmetric(8, 0)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal_centered(|ui| {
+                    ui.label(
+                        RichText::new(self.window_title())
+                            .size(12.0)
+                            .color(text_color),
+                    );
+
+                    let controls_width = 108.0;
+                    let drag_width = (ui.available_width() - controls_width).max(0.0);
+                    let drag_rect =
+                        Rect::from_min_size(ui.cursor().min, vec2(drag_width, title_bar_height));
+                    let _drag_response = ui.allocate_rect(drag_rect, Sense::hover());
+
+                    let (primary_pressed, double_clicked, pointer_pos) = ctx.input(|input| {
+                        (
+                            input.pointer.primary_pressed(),
+                            input.pointer.button_double_clicked(PointerButton::Primary),
+                            input.pointer.interact_pos(),
+                        )
+                    });
+                    let pointer_in_drag_area =
+                        pointer_pos.is_some_and(|pos| drag_rect.contains(pos));
+
+                    if double_clicked && pointer_in_drag_area {
+                        ctx.send_viewport_cmd(ViewportCommand::Maximized(!is_maximized));
+                    } else if primary_pressed && pointer_in_drag_area {
+                        ctx.send_viewport_cmd(ViewportCommand::StartDrag);
+                    }
+
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if title_bar_button(ui, "x", text_color, hover_bg).clicked() {
+                            ctx.send_viewport_cmd(ViewportCommand::Close);
+                        }
+                        if title_bar_button(ui, "[]", text_color, hover_bg).clicked() {
+                            ctx.send_viewport_cmd(ViewportCommand::Maximized(!is_maximized));
+                        }
+                        if title_bar_button(ui, "_", text_color, hover_bg).clicked() {
+                            ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
+                        }
+                    });
+                });
+            });
+    }
+}
+
+fn title_bar_button(ui: &mut Ui, text: &str, text_color: Color32, hover_bg: Color32) -> Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(34.0, 22.0), Sense::click());
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(4), hover_bg);
+    }
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        text,
+        FontId::proportional(12.0),
+        text_color,
+    );
+    response
 }
 
 impl eframe::App for MdViewApp {
@@ -199,7 +293,7 @@ impl eframe::App for MdViewApp {
         // 6. 处理文件监视器
         if update::check_file_watcher(&mut self.file_watcher) {
             if let Some(path) = self.file_path.clone() {
-                self.load_file(path);
+                self.reload_file(path);
                 ctx.request_repaint();
             }
         }
@@ -208,6 +302,8 @@ impl eframe::App for MdViewApp {
         if let Some(path) = update::check_dropped_files(ctx) {
             self.load_file(path);
         }
+
+        self.render_title_bar(ctx);
 
         // 8. 渲染 UI
         CentralPanel::default()
@@ -239,6 +335,7 @@ impl eframe::App for MdViewApp {
                         self.font_size,
                         &mut self.selector,
                         &mut self.viewport,
+                        &mut self.scroll_to_top_pending,
                     );
                 } else if let Some(err) = self.error_msg.clone() {
                     ui.vertical_centered(|ui| {
@@ -286,13 +383,6 @@ impl eframe::App for MdViewApp {
                     });
                 }
             });
-
-        // 关键逻辑：首帧渲染后，恢复系统边框和非透明状态
-        if !self.first_frame_done {
-            ctx.send_viewport_cmd(ViewportCommand::Decorations(true));
-            ctx.send_viewport_cmd(ViewportCommand::Transparent(false));
-            self.first_frame_done = true;
-        }
 
         // 菜单内切主题发生在渲染过程中，这里补一次同步用于下一次重绘
         if self.sync_theme(ctx) {

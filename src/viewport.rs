@@ -22,6 +22,7 @@ pub struct ViewportState {
     content_width: f32,
     font_size: f32,
     layout_dirty: bool,
+    first_measurement_pass: bool,
 }
 
 impl ViewportState {
@@ -39,6 +40,7 @@ impl ViewportState {
             content_width: 0.0,
             font_size: 0.0,
             layout_dirty: true,
+            first_measurement_pass: true,
         }
     }
 
@@ -69,6 +71,14 @@ impl ViewportState {
 
     pub fn mark_layout_dirty(&mut self) {
         self.layout_dirty = true;
+    }
+
+    pub fn is_first_measurement_pass(&self) -> bool {
+        self.first_measurement_pass
+    }
+
+    pub fn finish_measurement_pass(&mut self) {
+        self.first_measurement_pass = false;
     }
 
     pub fn rebuild_positions(&mut self, top_padding: f32, block_spacing: f32, bottom_padding: f32) {

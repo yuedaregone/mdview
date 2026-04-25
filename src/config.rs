@@ -26,7 +26,6 @@ pub struct AppConfig {
     pub code_font_cached_name: Option<String>,
     #[serde(default)]
     pub code_font_cached_path: Option<String>,
-    pub last_file: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -47,7 +46,7 @@ impl Default for AppConfig {
             ui_font_cached_path: None,
             code_font_cached_name: None,
             code_font_cached_path: None,
-            last_file: None,
+
         }
     }
 }

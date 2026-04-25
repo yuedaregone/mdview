@@ -147,11 +147,8 @@ fn main() -> eframe::Result<()> {
     // Load config for window settings
     let mut config = config::AppConfig::load();
 
-    // Use command line file if provided, otherwise use last opened file
-    let file_to_open = args
-        .file
-        .clone()
-        .or_else(|| config.last_file.as_ref().map(PathBuf::from));
+    // Use command line file if provided
+    let file_to_open = args.file.clone();
 
     // Pre-parse markdown before window init for faster perceived startup
     let doc = file_to_open
