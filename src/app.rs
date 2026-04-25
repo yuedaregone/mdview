@@ -56,6 +56,8 @@ pub struct MdViewApp {
     last_save_time: Instant,
     /// 下次渲染文档时是否需要把主滚动区重置到顶部
     scroll_to_top_pending: bool,
+    /// 无边框窗口的边缘缩放状态
+    resize_state: WindowResizeState,
 }
 
 impl MdViewApp {
@@ -98,6 +100,7 @@ impl MdViewApp {
             config_needs_save: fonts_changed,
             last_save_time: Instant::now(),
             scroll_to_top_pending: false,
+            resize_state: WindowResizeState::default(),
         };
 
         // 提前应用主题，防止首帧闪烁
@@ -178,11 +181,12 @@ impl MdViewApp {
             .unwrap_or_else(|| "mdview".to_string())
     }
 
-    fn render_title_bar(&self, ctx: &Context) {
+    fn render_title_bar(&self, ctx: &Context, resizing_active: bool) {
         let title_bar_height = 30.0;
         let is_maximized = ctx.input(|i| i.viewport().maximized).unwrap_or(false);
         let title_bar_bg = self.theme.background;
         let hover_bg = self.theme.code_bg;
+        let border_color = self.window_border_color();
         let text_color = self.theme.foreground;
 
         TopBottomPanel::top("mdview_title_bar")
@@ -190,7 +194,6 @@ impl MdViewApp {
             .frame(
                 Frame::NONE
                     .fill(title_bar_bg)
-                    .stroke(Stroke::new(1.0, self.theme.hr_color))
                     .inner_margin(Margin::symmetric(8, 0)),
             )
             .show(ctx, |ui| {
@@ -219,40 +222,241 @@ impl MdViewApp {
 
                     if double_clicked && pointer_in_drag_area {
                         ctx.send_viewport_cmd(ViewportCommand::Maximized(!is_maximized));
-                    } else if primary_pressed && pointer_in_drag_area {
+                    } else if primary_pressed && pointer_in_drag_area && !resizing_active {
                         ctx.send_viewport_cmd(ViewportCommand::StartDrag);
                     }
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if title_bar_button(ui, "x", text_color, hover_bg).clicked() {
+                        if title_bar_button(ui, TitleBarButtonIcon::Close, text_color, hover_bg)
+                            .clicked()
+                        {
                             ctx.send_viewport_cmd(ViewportCommand::Close);
                         }
-                        if title_bar_button(ui, "[]", text_color, hover_bg).clicked() {
+                        let maximize_icon = if is_maximized {
+                            TitleBarButtonIcon::Restore
+                        } else {
+                            TitleBarButtonIcon::Maximize
+                        };
+                        if title_bar_button(ui, maximize_icon, text_color, hover_bg).clicked() {
                             ctx.send_viewport_cmd(ViewportCommand::Maximized(!is_maximized));
                         }
-                        if title_bar_button(ui, "_", text_color, hover_bg).clicked() {
+                        if title_bar_button(ui, TitleBarButtonIcon::Minimize, text_color, hover_bg)
+                            .clicked()
+                        {
                             ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
                         }
                     });
                 });
+
+                let bottom = ui.max_rect().bottom();
+                ui.painter().hline(
+                    ui.max_rect().x_range(),
+                    bottom - 0.5,
+                    Stroke::new(1.0, border_color),
+                );
             });
+    }
+
+    fn render_window_border(&self, ctx: &Context) {
+        let rect = ctx.screen_rect().shrink(0.5);
+        ctx.layer_painter(LayerId::new(
+            Order::Foreground,
+            Id::new("mdview_window_border"),
+        ))
+        .rect_stroke(
+            rect,
+            CornerRadius::ZERO,
+            Stroke::new(1.0, self.window_border_color()),
+            StrokeKind::Inside,
+        );
+    }
+
+    fn window_border_color(&self) -> Color32 {
+        if self.theme.is_dark {
+            Color32::from_rgba_unmultiplied(255, 255, 255, 20)
+        } else {
+            Color32::from_rgba_unmultiplied(0, 0, 0, 18)
+        }
     }
 }
 
-fn title_bar_button(ui: &mut Ui, text: &str, text_color: Color32, hover_bg: Color32) -> Response {
+#[derive(Clone, Copy)]
+enum TitleBarButtonIcon {
+    Minimize,
+    Maximize,
+    Restore,
+    Close,
+}
+
+#[derive(Debug, Default)]
+struct WindowResizeState {
+    resizing: bool,
+    pending_cursor: Option<CursorIcon>,
+}
+
+impl WindowResizeState {
+    fn handle(&mut self, ctx: &Context) -> bool {
+        if ctx.input(|input| input.viewport().maximized.unwrap_or(false)) {
+            self.resizing = false;
+            self.pending_cursor = None;
+            return false;
+        }
+
+        let (pointer_pos, primary_pressed, primary_down) = ctx.input(|input| {
+            (
+                input.pointer.hover_pos(),
+                input.pointer.primary_pressed(),
+                input.pointer.primary_down(),
+            )
+        });
+
+        if self.resizing {
+            if !primary_down {
+                self.resizing = false;
+            }
+            return true;
+        }
+
+        let Some(pointer_pos) = pointer_pos else {
+            self.pending_cursor = None;
+            return false;
+        };
+
+        let direction = detect_resize_direction(ctx.screen_rect(), pointer_pos);
+        if let Some(direction) = direction {
+            self.pending_cursor = Some(resize_direction_cursor(direction));
+            if primary_pressed {
+                ctx.send_viewport_cmd(ViewportCommand::BeginResize(direction));
+                self.resizing = true;
+                return true;
+            }
+        } else {
+            self.pending_cursor = None;
+        }
+
+        direction.is_some()
+    }
+
+    fn apply_cursor(&mut self, ctx: &Context) {
+        if let Some(cursor) = self.pending_cursor.take() {
+            ctx.set_cursor_icon(cursor);
+        }
+    }
+}
+
+const RESIZE_BORDER_WIDTH: f32 = 5.0;
+const RESIZE_CORNER_SIZE: f32 = 10.0;
+
+fn detect_resize_direction(window_rect: Rect, pointer_pos: Pos2) -> Option<ResizeDirection> {
+    let min = window_rect.min;
+    let max = window_rect.max;
+
+    let near_left = pointer_pos.x <= min.x + RESIZE_BORDER_WIDTH;
+    let near_right = pointer_pos.x >= max.x - RESIZE_BORDER_WIDTH;
+    let near_top = pointer_pos.y <= min.y + RESIZE_BORDER_WIDTH;
+    let near_bottom = pointer_pos.y >= max.y - RESIZE_BORDER_WIDTH;
+
+    let in_left_corner = pointer_pos.x <= min.x + RESIZE_CORNER_SIZE;
+    let in_right_corner = pointer_pos.x >= max.x - RESIZE_CORNER_SIZE;
+    let in_top_corner = pointer_pos.y <= min.y + RESIZE_CORNER_SIZE;
+    let in_bottom_corner = pointer_pos.y >= max.y - RESIZE_CORNER_SIZE;
+
+    if in_top_corner && in_left_corner {
+        return Some(ResizeDirection::NorthWest);
+    }
+    if in_top_corner && in_right_corner {
+        return Some(ResizeDirection::NorthEast);
+    }
+    if in_bottom_corner && in_left_corner {
+        return Some(ResizeDirection::SouthWest);
+    }
+    if in_bottom_corner && in_right_corner {
+        return Some(ResizeDirection::SouthEast);
+    }
+
+    if near_left {
+        return Some(ResizeDirection::West);
+    }
+    if near_right {
+        return Some(ResizeDirection::East);
+    }
+    if near_top {
+        return Some(ResizeDirection::North);
+    }
+    if near_bottom {
+        return Some(ResizeDirection::South);
+    }
+
+    None
+}
+
+fn resize_direction_cursor(direction: ResizeDirection) -> CursorIcon {
+    match direction {
+        ResizeDirection::North | ResizeDirection::South => CursorIcon::ResizeVertical,
+        ResizeDirection::East | ResizeDirection::West => CursorIcon::ResizeHorizontal,
+        ResizeDirection::NorthWest | ResizeDirection::SouthEast => CursorIcon::ResizeNwSe,
+        ResizeDirection::NorthEast | ResizeDirection::SouthWest => CursorIcon::ResizeNeSw,
+    }
+}
+
+fn title_bar_button(
+    ui: &mut Ui,
+    icon: TitleBarButtonIcon,
+    text_color: Color32,
+    hover_bg: Color32,
+) -> Response {
     let (rect, response) = ui.allocate_exact_size(vec2(34.0, 22.0), Sense::click());
     if response.hovered() {
         ui.painter()
             .rect_filled(rect, CornerRadius::same(4), hover_bg);
     }
-    ui.painter().text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        text,
-        FontId::proportional(12.0),
-        text_color,
-    );
+    paint_title_bar_icon(ui.painter(), rect, icon, text_color);
     response
+}
+
+fn paint_title_bar_icon(painter: &Painter, rect: Rect, icon: TitleBarButtonIcon, color: Color32) {
+    let center = rect.center();
+    let stroke = Stroke::new(1.4, color);
+
+    match icon {
+        TitleBarButtonIcon::Minimize => {
+            painter.line_segment(
+                [
+                    pos2(center.x - 5.5, center.y + 3.5),
+                    pos2(center.x + 5.5, center.y + 3.5),
+                ],
+                stroke,
+            );
+        }
+        TitleBarButtonIcon::Maximize => {
+            let icon_rect = Rect::from_center_size(center, vec2(10.0, 8.0));
+            painter.rect_stroke(icon_rect, 0.0, stroke, StrokeKind::Inside);
+        }
+        TitleBarButtonIcon::Restore => {
+            let back = Rect::from_min_size(pos2(center.x - 2.5, center.y - 6.0), vec2(8.0, 6.0));
+            let front = Rect::from_min_size(pos2(center.x - 5.0, center.y - 3.0), vec2(8.0, 6.0));
+            painter.line_segment([back.left_top(), back.right_top()], stroke);
+            painter.line_segment([back.right_top(), back.right_bottom()], stroke);
+            painter.rect_stroke(front, 0.0, stroke, StrokeKind::Inside);
+        }
+        TitleBarButtonIcon::Close => {
+            let delta = 4.8;
+            painter.line_segment(
+                [
+                    pos2(center.x - delta, center.y - delta),
+                    pos2(center.x + delta, center.y + delta),
+                ],
+                stroke,
+            );
+            painter.line_segment(
+                [
+                    pos2(center.x + delta, center.y - delta),
+                    pos2(center.x - delta, center.y + delta),
+                ],
+                stroke,
+            );
+        }
+    }
 }
 
 impl eframe::App for MdViewApp {
@@ -303,7 +507,8 @@ impl eframe::App for MdViewApp {
             self.load_file(path);
         }
 
-        self.render_title_bar(ctx);
+        let resizing_active = self.resize_state.handle(ctx);
+        self.render_title_bar(ctx, resizing_active);
 
         // 8. 渲染 UI
         CentralPanel::default()
@@ -388,6 +593,9 @@ impl eframe::App for MdViewApp {
         if self.sync_theme(ctx) {
             ctx.request_repaint();
         }
+
+        self.render_window_border(ctx);
+        self.resize_state.apply_cursor(ctx);
     }
 
     fn save(&mut self, _storage: &mut dyn eframe::Storage) {
