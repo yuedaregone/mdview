@@ -151,7 +151,7 @@ fn main_menu_items(
     menu_id: Id,
 ) {
     // 复制
-    if menu_item(ui, "复制", selector.has_selection()) {
+    if menu_item(ui, "复制", selector.has_selection(), menu_id) {
         selector.copy_to_clipboard();
         close_menu(ui.ctx(), menu_id);
         return;
@@ -176,7 +176,7 @@ fn main_menu_items(
     ui.separator();
 
     // 打开目录
-    if menu_item(ui, "打开目录", file_path.is_some()) {
+    if menu_item(ui, "打开目录", file_path.is_some(), menu_id) {
         if let Some(path) = file_path {
             if let Some(dir) = path.parent() {
                 let _ = open::that(dir);
@@ -187,9 +187,15 @@ fn main_menu_items(
     }
 }
 
-fn menu_item(ui: &mut Ui, text: &str, enabled: bool) -> bool {
+fn menu_item(ui: &mut Ui, text: &str, enabled: bool, menu_id: Id) -> bool {
     let (rect, response) =
         ui.allocate_exact_size(vec2(MAIN_MENU_WIDTH, MENU_ITEM_HEIGHT), Sense::click());
+
+    if response.hovered() {
+        ui.ctx().memory_mut(|mem| {
+            mem.data.insert_temp(menu_id.with("submenu_open"), 0u32);
+        });
+    }
 
     if enabled && response.hovered() {
         ui.painter()

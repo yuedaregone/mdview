@@ -186,7 +186,11 @@ impl MdViewApp {
         let is_maximized = ctx.input(|i| i.viewport().maximized).unwrap_or(false);
         let title_bar_bg = self.theme.background;
         let hover_bg = self.theme.code_bg;
-        let border_color = self.window_border_color();
+        let border_color = if is_maximized {
+            Color32::TRANSPARENT
+        } else {
+            self.window_chrome_line_color()
+        };
         let text_color = self.theme.foreground;
 
         TopBottomPanel::top("mdview_title_bar")
@@ -248,16 +252,22 @@ impl MdViewApp {
                     });
                 });
 
-                let bottom = ui.max_rect().bottom();
-                ui.painter().hline(
-                    ui.max_rect().x_range(),
-                    bottom - 0.5,
-                    Stroke::new(1.0, border_color),
-                );
+                if border_color != Color32::TRANSPARENT {
+                    let bottom = ui.max_rect().bottom();
+                    ui.painter().hline(
+                        ui.max_rect().x_range(),
+                        bottom - 0.5,
+                        Stroke::new(1.0, border_color),
+                    );
+                }
             });
     }
 
     fn render_window_border(&self, ctx: &Context) {
+        if ctx.input(|input| input.viewport().maximized.unwrap_or(false)) {
+            return;
+        }
+
         let rect = ctx.screen_rect().shrink(0.5);
         ctx.layer_painter(LayerId::new(
             Order::Foreground,
@@ -266,16 +276,16 @@ impl MdViewApp {
         .rect_stroke(
             rect,
             CornerRadius::ZERO,
-            Stroke::new(1.0, self.window_border_color()),
+            Stroke::new(1.0, self.window_chrome_line_color()),
             StrokeKind::Inside,
         );
     }
 
-    fn window_border_color(&self) -> Color32 {
+    fn window_chrome_line_color(&self) -> Color32 {
         if self.theme.is_dark {
-            Color32::from_rgba_unmultiplied(255, 255, 255, 20)
+            Color32::from_rgba_unmultiplied(255, 255, 255, 12)
         } else {
-            Color32::from_rgba_unmultiplied(0, 0, 0, 18)
+            Color32::from_rgba_unmultiplied(0, 0, 0, 10)
         }
     }
 }

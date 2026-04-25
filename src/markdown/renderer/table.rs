@@ -4,16 +4,19 @@
 
 use egui::*;
 
-use super::inlines::{inlines_to_rich_text, render_inlines};
+use super::inlines::{
+    inlines_to_rich_text, inlines_to_rich_text_with_min_wrap_width,
+    render_inlines_with_min_wrap_width,
+};
 use crate::markdown::parser::{Align as ParserAlign, TableCell};
 use crate::selection::TextSelector;
 use crate::theme::Theme;
 
 const CELL_PADDING_X: f32 = 10.0;
 const CELL_PADDING_Y: f32 = 8.0;
-const MIN_COLUMN_WIDTH: f32 = 140.0;
+const MIN_COLUMN_WIDTH: f32 = 88.0;
 const BASE_MAX_COLUMN_WIDTH: f32 = 420.0;
-const GRID_MIN_COL_WIDTH: f32 = 120.0;
+const MIN_CELL_WRAP_WIDTH: f32 = 32.0;
 
 pub(super) fn render_table(
     ui: &mut Ui,
@@ -64,7 +67,7 @@ pub(super) fn render_table(
                 let mut rects = Vec::with_capacity(rows.len() + 1);
 
                 Grid::new(ui.id().with("md_table").with(block_index))
-                    .min_col_width(GRID_MIN_COL_WIDTH)
+                    .min_col_width(0.0)
                     .spacing([0.0, 0.0])
                     .show(ui, |ui| {
                         let mut header_rects = Vec::with_capacity(column_count);
@@ -180,7 +183,7 @@ fn render_table_cell(
     );
 
     if let Some(cell) = cell {
-        render_inlines(
+        render_inlines_with_min_wrap_width(
             &mut child_ui,
             &cell.content,
             theme,
@@ -189,6 +192,7 @@ fn render_table_cell(
             selector,
             separator_before,
             cell_id,
+            MIN_CELL_WRAP_WIDTH,
         );
     }
 
@@ -325,12 +329,13 @@ fn measure_table_cell_height(
         return font_size + padding_y * 2.0;
     };
 
-    let (job, _) = inlines_to_rich_text(
+    let (job, _) = inlines_to_rich_text_with_min_wrap_width(
         &cell.content,
         theme,
         font_size,
         theme.foreground,
         content_width,
+        MIN_CELL_WRAP_WIDTH,
     );
     let galley = ui.fonts(|fonts| fonts.layout_job(job));
 
@@ -365,7 +370,7 @@ fn estimate_table_column_widths(
             .clamp(MIN_COLUMN_WIDTH, soft_max_width);
     }
 
-    expand_column_widths(widths, available_width)
+    fit_column_widths(widths, available_width)
 }
 
 fn estimate_cell_width(
@@ -393,8 +398,30 @@ fn measure_table_cell_width(ui: &Ui, cell: &TableCell, theme: &Theme, font_size:
     galley.size().x.max(1.0)
 }
 
-fn expand_column_widths(mut widths: Vec<f32>, target_total_width: f32) -> Vec<f32> {
+fn adaptive_min_column_width(column_count: usize, target_total_width: f32) -> f32 {
+    if column_count == 0 || !target_total_width.is_finite() || target_total_width <= 0.0 {
+        return MIN_COLUMN_WIDTH;
+    }
+
+    let even_width = target_total_width / column_count as f32;
+    even_width.clamp(MIN_CELL_WRAP_WIDTH + CELL_PADDING_X * 2.0, MIN_COLUMN_WIDTH)
+}
+
+fn fit_column_widths(widths: Vec<f32>, target_total_width: f32) -> Vec<f32> {
     if widths.is_empty() {
+        return widths;
+    }
+
+    let current_total = widths.iter().sum::<f32>();
+    if current_total >= target_total_width {
+        shrink_column_widths(widths, target_total_width)
+    } else {
+        expand_column_widths(widths, target_total_width)
+    }
+}
+
+fn expand_column_widths(mut widths: Vec<f32>, target_total_width: f32) -> Vec<f32> {
+    if widths.is_empty() || !target_total_width.is_finite() || target_total_width <= 0.0 {
         return widths;
     }
 
@@ -423,9 +450,80 @@ fn expand_column_widths(mut widths: Vec<f32>, target_total_width: f32) -> Vec<f3
     widths
 }
 
+fn shrink_column_widths(mut widths: Vec<f32>, target_total_width: f32) -> Vec<f32> {
+    if widths.is_empty() || !target_total_width.is_finite() || target_total_width <= 0.0 {
+        return widths;
+    }
+
+    let current_total = widths.iter().sum::<f32>();
+    if current_total <= target_total_width {
+        return widths;
+    }
+
+    let min_width = adaptive_min_column_width(widths.len(), target_total_width);
+    let min_widths: Vec<f32> = widths.iter().map(|width| width.min(min_width)).collect();
+    let min_total = min_widths.iter().sum::<f32>();
+
+    if min_total >= target_total_width {
+        let scale = target_total_width / min_total;
+        for (width, min_width) in widths.iter_mut().zip(min_widths.iter()) {
+            *width = (*min_width * scale).max(1.0);
+        }
+        normalize_column_widths(&mut widths, target_total_width);
+        return widths;
+    }
+
+    let mut remaining_deficit = current_total - target_total_width;
+    let mut flexible: Vec<bool> = widths
+        .iter()
+        .zip(min_widths.iter())
+        .map(|(width, min_width)| *width > *min_width)
+        .collect();
+
+    while remaining_deficit > 0.01 && flexible.iter().any(|is_flexible| *is_flexible) {
+        let flexible_count = flexible.iter().filter(|is_flexible| **is_flexible).count() as f32;
+        let shrink_per_column = remaining_deficit / flexible_count;
+        let mut consumed_deficit: f32 = 0.0;
+
+        for ((width, min_width), is_flexible) in widths
+            .iter_mut()
+            .zip(min_widths.iter())
+            .zip(flexible.iter_mut())
+        {
+            if !*is_flexible {
+                continue;
+            }
+
+            let available_shrink = (*width - *min_width).max(0.0);
+            let shrink = available_shrink.min(shrink_per_column);
+            *width -= shrink;
+            consumed_deficit += shrink;
+
+            if (*width - *min_width).abs() <= 0.01 {
+                *is_flexible = false;
+            }
+        }
+
+        if consumed_deficit <= 0.01 {
+            break;
+        }
+        remaining_deficit -= consumed_deficit;
+    }
+
+    normalize_column_widths(&mut widths, target_total_width);
+    widths
+}
+
+fn normalize_column_widths(widths: &mut [f32], target_total_width: f32) {
+    let adjusted_total = widths.iter().sum::<f32>();
+    if let Some(last) = widths.last_mut() {
+        *last = (*last + target_total_width - adjusted_total).max(1.0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::expand_column_widths;
+    use super::{adaptive_min_column_width, expand_column_widths, fit_column_widths};
 
     #[test]
     fn expand_column_widths_fills_target_width() {
@@ -440,5 +538,28 @@ mod tests {
     fn expand_column_widths_keeps_existing_when_already_wide_enough() {
         let widths = expand_column_widths(vec![200.0, 220.0], 300.0);
         assert_eq!(widths, vec![200.0, 220.0]);
+    }
+
+    #[test]
+    fn fit_column_widths_shrinks_to_target_width() {
+        let widths = fit_column_widths(vec![240.0, 320.0, 440.0], 600.0);
+        let total = widths.iter().sum::<f32>();
+
+        assert!((total - 600.0).abs() < 0.01);
+        assert!(widths.iter().all(|width| *width >= 88.0));
+    }
+
+    #[test]
+    fn fit_column_widths_compresses_many_columns_to_viewport() {
+        let widths = fit_column_widths(vec![140.0; 10], 620.0);
+        let total = widths.iter().sum::<f32>();
+
+        assert!((total - 620.0).abs() < 0.01);
+        assert!(widths.iter().all(|width| *width >= 1.0));
+    }
+
+    #[test]
+    fn adaptive_min_column_width_allows_narrow_many_column_tables() {
+        assert!(adaptive_min_column_width(8, 480.0) < 88.0);
     }
 }

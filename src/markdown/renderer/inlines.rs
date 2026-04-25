@@ -19,8 +19,40 @@ pub fn render_inlines(
     separator_before: &'static str,
     _id: egui::Id,
 ) {
+    render_inlines_with_min_wrap_width(
+        ui,
+        inlines,
+        theme,
+        font_size,
+        default_color,
+        selector,
+        separator_before,
+        _id,
+        100.0,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn render_inlines_with_min_wrap_width(
+    ui: &mut Ui,
+    inlines: &[InlineNode],
+    theme: &Theme,
+    font_size: f32,
+    default_color: Color32,
+    selector: &mut TextSelector,
+    separator_before: &'static str,
+    _id: egui::Id,
+    min_wrap_width: f32,
+) {
     let max_width = ui.available_width();
-    let (job, links) = inlines_to_rich_text(inlines, theme, font_size, default_color, max_width);
+    let (job, links) = inlines_to_rich_text_with_min_wrap_width(
+        inlines,
+        theme,
+        font_size,
+        default_color,
+        max_width,
+        min_wrap_width,
+    );
     let plain_text = job.text.clone();
     let has_links = !links.is_empty();
     let galley = ui.fonts(|f| f.layout_job(job.clone()));
@@ -109,10 +141,28 @@ pub fn inlines_to_rich_text(
     default_color: Color32,
     max_width: f32,
 ) -> (egui::text::LayoutJob, Vec<(String, std::ops::Range<usize>)>) {
+    inlines_to_rich_text_with_min_wrap_width(
+        inlines,
+        theme,
+        font_size,
+        default_color,
+        max_width,
+        100.0,
+    )
+}
+
+pub fn inlines_to_rich_text_with_min_wrap_width(
+    inlines: &[InlineNode],
+    theme: &Theme,
+    font_size: f32,
+    default_color: Color32,
+    max_width: f32,
+    min_wrap_width: f32,
+) -> (egui::text::LayoutJob, Vec<(String, std::ops::Range<usize>)>) {
     let mut job = egui::text::LayoutJob {
         text: String::new(),
         wrap: if max_width.is_finite() {
-            egui::text::TextWrapping::wrap_at_width(max_width.max(100.0))
+            egui::text::TextWrapping::wrap_at_width(max_width.max(min_wrap_width))
         } else {
             egui::text::TextWrapping::no_max_width()
         },
