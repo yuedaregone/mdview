@@ -304,30 +304,6 @@ pub fn show_submenus(
                         close_menu(ctx, menu_id);
                     }
                 }
-
-                ui.separator();
-
-                ui.horizontal(|ui| {
-                    if ui.small_button("减小 (-2)").clicked() {
-                        *font_size = (*font_size - 2.0).max(8.0);
-                        config.font_size = *font_size;
-                        *config_needs_save = true;
-                        crate::markdown::highlight::clear_highlight_cache();
-                    }
-                    if ui.small_button("增大 (+2)").clicked() {
-                        *font_size = (*font_size + 2.0).min(32.0);
-                        config.font_size = *font_size;
-                        *config_needs_save = true;
-                        crate::markdown::highlight::clear_highlight_cache();
-                    }
-                });
-
-                if small_btn(ui, "重置 (16px)") {
-                    *font_size = 16.0;
-                    config.font_size = 16.0;
-                    *config_needs_save = true;
-                    crate::markdown::highlight::clear_highlight_cache();
-                }
             },
         );
     } else if submenu_open == 2 {
@@ -408,8 +384,4 @@ fn check_item(ui: &mut Ui, text: &str, checked: bool) -> bool {
     );
 
     response.clicked()
-}
-
-fn small_btn(ui: &mut Ui, text: &str) -> bool {
-    ui.add(Button::new(text).small()).clicked()
 }
