@@ -126,7 +126,11 @@ fn render_code_block(
         .inner_margin(Margin::same(12))
         .outer_margin(Margin::same(4));
 
-    frame.show(ui, |ui| {
+    let mut code_rect = Rect::NOTHING;
+    let frame_response = frame.show(ui, |ui| {
+        let rect = ui.min_rect();
+        code_rect = rect;
+
         if !lang.is_empty() {
             ui.horizontal(|ui| {
                 ui.label(
@@ -169,6 +173,60 @@ fn render_code_block(
                 selector.add_segment(response.rect, code.to_string(), galley, "\n");
             });
     });
+
+    let frame_rect = frame_response.response.rect;
+
+    // 始终分配按钮区域以保持交互状态稳定
+    let button_size = 24.0;
+    let button_rect = Rect::from_min_size(
+        Pos2::new(frame_rect.right() - button_size - 6.0, frame_rect.top() + 6.0),
+        vec2(button_size, button_size),
+    );
+
+    let button_id = ui.id().with("copy_btn").with(block_index);
+    
+    // 始终创建按钮交互响应，保持状态稳定
+    let button_response = ui.interact(button_rect, button_id, Sense::click());
+    
+    // 当鼠标在代码块内或按钮上时显示按钮
+    let show_button = frame_response.response.hovered() || button_response.hovered();
+
+    if show_button {
+        if button_response.clicked() {
+            if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                let _ = clipboard.set_text(code);
+            }
+        }
+
+        // 绘制按钮背景 - 使用 Overlay 层确保在最上层
+        let painter = ui.painter_at(button_rect);
+        let button_fill = if button_response.is_pointer_button_down_on() {
+            Color32::from_gray(40)  // 按下时更深
+        } else if button_response.hovered() {
+            Color32::from_gray(60)  // 悬停时较亮
+        } else {
+            Color32::from_gray(45)  // 默认状态
+        };
+        let corner_radius = 6.0;
+        painter.rect_filled(button_rect, corner_radius, button_fill);
+        painter.rect_stroke(button_rect, corner_radius, Stroke::new(1.0, Color32::from_gray(80)), StrokeKind::Outside);
+
+        // 始终显示复制图标，保持按钮大小稳定
+        let icon_color = if button_response.is_pointer_button_down_on() {
+            Color32::from_gray(150)  // 按下时图标稍暗
+        } else if button_response.hovered() {
+            Color32::WHITE  // 悬停时图标亮
+        } else {
+            Color32::from_gray(180)  // 默认状态
+        };
+        painter.text(
+            button_rect.center(),
+            Align2::CENTER_CENTER,
+            "📋",
+            FontId::new(code_size * 0.7, FontFamily::Proportional),
+            icon_color,
+        );
+    }
 }
 
 /// 渲染引用
