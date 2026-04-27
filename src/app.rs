@@ -83,6 +83,7 @@ impl MdViewApp {
         let font_size = bootstrap.config.font_size;
         let window_maximized = bootstrap.config.maximized;
         let doc = bootstrap.doc.map(Arc::new);
+        let has_startup_doc = doc.is_some();
 
         let app = Self {
             file_path: bootstrap.file_path,
@@ -99,7 +100,7 @@ impl MdViewApp {
             file_watcher: bootstrap.file_watcher,
             config_needs_save: fonts_changed,
             last_save_time: Instant::now(),
-            scroll_to_top_pending: false,
+            scroll_to_top_pending: has_startup_doc,
             resize_state: WindowResizeState::default(),
         };
 
@@ -470,6 +471,10 @@ fn paint_title_bar_icon(painter: &Painter, rect: Rect, icon: TitleBarButtonIcon,
 }
 
 impl eframe::App for MdViewApp {
+    fn persist_egui_memory(&self) -> bool {
+        false
+    }
+
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         // 1. 窗口状态跟踪
         update::handle_window_state(

@@ -208,8 +208,14 @@ fn render_code_block(
             Color32::from_gray(45)  // 默认状态
         };
         let corner_radius = 6.0;
-        painter.rect_filled(button_rect, corner_radius, button_fill);
-        painter.rect_stroke(button_rect, corner_radius, Stroke::new(1.0, Color32::from_gray(80)), StrokeKind::Outside);
+        let paint_rect = button_rect.shrink(0.5);
+        painter.rect_filled(paint_rect, corner_radius, button_fill);
+        painter.rect_stroke(
+            paint_rect,
+            corner_radius,
+            Stroke::new(1.0, Color32::from_gray(80)),
+            StrokeKind::Inside,
+        );
 
         // 始终显示复制图标，保持按钮大小稳定
         let icon_color = if button_response.is_pointer_button_down_on() {
@@ -219,14 +225,26 @@ fn render_code_block(
         } else {
             Color32::from_gray(180)  // 默认状态
         };
-        painter.text(
-            button_rect.center(),
-            Align2::CENTER_CENTER,
-            "📋",
-            FontId::new(code_size * 0.7, FontFamily::Proportional),
-            icon_color,
-        );
+        paint_copy_icon(&painter, button_rect, icon_color);
     }
+}
+
+fn paint_copy_icon(painter: &Painter, rect: Rect, color: Color32) {
+    let stroke = Stroke::new(1.4, color);
+    let back = Rect::from_min_size(
+        Pos2::new(rect.center().x - 5.0, rect.center().y - 6.0),
+        Vec2::new(8.0, 9.0),
+    );
+    let front = Rect::from_min_size(
+        Pos2::new(rect.center().x - 3.0, rect.center().y - 3.0),
+        Vec2::new(8.0, 9.0),
+    );
+
+    painter.line_segment([back.left_top(), back.right_top()], stroke);
+    painter.line_segment([back.left_top(), back.left_bottom()], stroke);
+    painter.line_segment([back.right_top(), back.right_bottom()], stroke);
+    painter.line_segment([back.left_bottom(), back.right_bottom()], stroke);
+    painter.rect_stroke(front, 1.5, stroke, StrokeKind::Inside);
 }
 
 /// 渲染引用
