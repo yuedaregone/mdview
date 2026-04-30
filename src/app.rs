@@ -58,6 +58,12 @@ pub struct MdViewApp {
     scroll_to_top_pending: bool,
     /// 无边框窗口的边缘缩放状态
     resize_state: WindowResizeState,
+    /// 启动阶段帧计数，用于延迟恢复最大化状态
+    startup_frame_index: u64,
+    /// 是否正在恢复启动时的最大化状态
+    restoring_startup_maximize: bool,
+    /// 是否已经发送启动阶段最大化命令
+    startup_maximize_sent: bool,
 }
 
 impl MdViewApp {
@@ -102,6 +108,9 @@ impl MdViewApp {
             last_save_time: Instant::now(),
             scroll_to_top_pending: has_startup_doc,
             resize_state: WindowResizeState::default(),
+            startup_frame_index: 0,
+            restoring_startup_maximize: window_maximized,
+            startup_maximize_sent: false,
         };
 
         // 提前应用主题，防止首帧闪烁
@@ -475,15 +484,35 @@ impl eframe::App for MdViewApp {
         false
     }
 
+    fn clear_color(&self, _visuals: &Visuals) -> [f32; 4] {
+        Color32::from_rgb(
+            self.theme.background.r(),
+            self.theme.background.g(),
+            self.theme.background.b(),
+        )
+        .to_normalized_gamma_f32()
+    }
+
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        self.startup_frame_index += 1;
+        let frame_index = self.startup_frame_index;
+
         // 1. 窗口状态跟踪
-        update::handle_window_state(
-            ctx,
-            &mut self.config,
-            &mut self.window_maximized,
-            &mut self.config_needs_save,
-            &mut self.last_save_time,
-        );
+        let currently_maximized = ctx.input(|i| i.viewport().maximized).unwrap_or(false);
+        if self.restoring_startup_maximize {
+            self.window_maximized = true;
+            if self.startup_maximize_sent && currently_maximized {
+                self.restoring_startup_maximize = false;
+            }
+        } else {
+            update::handle_window_state(
+                ctx,
+                &mut self.config,
+                &mut self.window_maximized,
+                &mut self.config_needs_save,
+                &mut self.last_save_time,
+            );
+        }
 
         // 2. 清除选择器 segments
         self.selector.clear_segments();
@@ -611,6 +640,12 @@ impl eframe::App for MdViewApp {
 
         self.render_window_border(ctx);
         self.resize_state.apply_cursor(ctx);
+
+        if self.restoring_startup_maximize && !self.startup_maximize_sent && frame_index >= 2 {
+            ctx.send_viewport_cmd(ViewportCommand::Maximized(true));
+            ctx.request_repaint();
+            self.startup_maximize_sent = true;
+        }
     }
 
     fn save(&mut self, _storage: &mut dyn eframe::Storage) {
